@@ -89,6 +89,12 @@
         <button id="nav-ia" onclick="switchNav('ia')" class="px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap text-slate-600 hover:text-gov-primary hover:bg-slate-100">
           <span>🛠️</span> IMPLEMENTING AGENCY
         </button>
+        <button id="nav-monitoring" onclick="switchNav('monitoring')" class="px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap text-slate-600 hover:text-gov-primary hover:bg-slate-100">
+          <span>🤖</span> PROJECT MONITORING & ML
+        </button>
+        <button id="nav-alerts" onclick="switchNav('alerts')" class="px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap text-slate-600 hover:text-gov-primary hover:bg-slate-100">
+          <span>🚨</span> ALERTS
+        </button>
         <button id="nav-analytics" onclick="switchNav('analytics')" class="px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap text-slate-600 hover:text-gov-primary hover:bg-slate-100">
           <span>📊</span> DATA ANALYTICS & CHARTS
         </button>
@@ -284,13 +290,42 @@
         </div>
       </div>
 
+      <!-- Dynamic Summary Information Cards -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4" id="public-summary-cards">
+        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+          <div class="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Matching Works</div>
+          <div class="text-2xl font-black text-gov-dark mt-0.5" id="pub-sum-works">--</div>
+          <div class="text-[11px] text-slate-500 mt-0.5">Filter results</div>
+        </div>
+        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+          <div class="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Sanctioned Outlay</div>
+          <div class="text-2xl font-black text-gov-primary mt-0.5" id="pub-sum-sanction">--</div>
+          <div class="text-[11px] text-slate-500 mt-0.5">Approved budget</div>
+        </div>
+        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+          <div class="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Disbursed Outlay</div>
+          <div class="text-2xl font-black text-emerald-700 mt-0.5" id="pub-sum-disbursed">--</div>
+          <div class="text-[11px] text-emerald-600 font-medium mt-0.5">Released funds</div>
+        </div>
+        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+          <div class="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Completed Works</div>
+          <div class="text-2xl font-black text-slate-800 mt-0.5" id="pub-sum-completed">--</div>
+          <div class="text-[11px] text-emerald-700 font-semibold mt-0.5">Civil work done</div>
+        </div>
+        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+          <div class="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Ongoing Works</div>
+          <div class="text-2xl font-black text-amber-700 mt-0.5" id="pub-sum-ongoing">--</div>
+          <div class="text-[11px] text-slate-500 mt-0.5">In execution</div>
+        </div>
+      </div>
+
       <!-- Top Filter Bar -->
       <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-3">
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
-          <!-- Keyword / ID Search -->
+          <!-- Keyword / ID / MP Search -->
           <div class="lg:col-span-2">
-            <label class="block text-xs font-semibold text-slate-600 mb-1">Search Title or Work ID</label>
-            <input type="text" id="filter-q" placeholder="Enter Work ID or title keyword..." class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-gov-primary focus:outline-hidden" onkeyup="if(event.key==='Enter') applyWorksFilter()">
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Search ID, Title, or MP Name</label>
+            <input type="text" id="filter-q" placeholder="Enter Work ID, title, or MP name..." class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-gov-primary focus:outline-hidden" onkeyup="if(event.key==='Enter') applyWorksFilter()">
           </div>
 
           <!-- State -->
@@ -304,16 +339,16 @@
           <!-- District -->
           <div>
             <label class="block text-xs font-semibold text-slate-600 mb-1">District</label>
-            <select id="filter-district" class="w-full text-xs border border-slate-300 rounded-lg px-2.5 py-2 focus:ring-2 focus:ring-gov-primary focus:outline-hidden" onchange="applyWorksFilter()">
+            <select id="filter-district" class="w-full text-xs border border-slate-300 rounded-lg px-2.5 py-2 focus:ring-2 focus:ring-gov-primary focus:outline-hidden" onchange="onDistrictFilterChange(this.value)">
               <option value="">All Districts</option>
             </select>
           </div>
 
-          <!-- Category -->
+          <!-- Constituency -->
           <div>
-            <label class="block text-xs font-semibold text-slate-600 mb-1">Category</label>
-            <select id="filter-category" class="w-full text-xs border border-slate-300 rounded-lg px-2.5 py-2 focus:ring-2 focus:ring-gov-primary focus:outline-hidden" onchange="applyWorksFilter()">
-              <option value="">All Categories</option>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Constituency</label>
+            <select id="filter-constituency" class="w-full text-xs border border-slate-300 rounded-lg px-2.5 py-2 focus:ring-2 focus:ring-gov-primary focus:outline-hidden" onchange="applyWorksFilter()">
+              <option value="">All Constituencies</option>
             </select>
           </div>
 
@@ -340,7 +375,7 @@
 
           <div class="flex items-center gap-2">
             <button onclick="resetPublicFilters()" class="text-xs font-medium text-slate-500 hover:text-slate-800 px-3 py-1.5 rounded-lg border border-slate-200">
-              Clear Filters
+              Reset Filters
             </button>
             <button onclick="applyWorksFilter()" class="bg-gov-primary hover:bg-blue-900 text-white text-xs font-bold px-5 py-2 rounded-lg transition shadow-xs flex items-center gap-1">
               <span>🔍 Apply Search</span>
@@ -355,18 +390,19 @@
           <table class="w-full gov-table text-left border-collapse">
             <thead>
               <tr>
-                <th>Work ID & Category</th>
-                <th>Work Title & Location</th>
-                <th>MP & Constituency</th>
-                <th>Sanction / Disbursed</th>
-                <th>Physical Progress</th>
+                <th>Work ID</th>
+                <th>Work Title</th>
+                <th>State & District</th>
+                <th>Constituency & MP</th>
+                <th>Sanction Amount</th>
+                <th>Total Disbursed</th>
                 <th>Status</th>
                 <th>Action</th>
               </tr>
             </thead>
             <tbody id="works-table-body">
               <tr>
-                <td colspan="7" class="text-center py-8 text-slate-400">Loading works data...</td>
+                <td colspan="8" class="text-center py-8 text-slate-400">Loading works data...</td>
               </tr>
             </tbody>
           </table>
@@ -656,38 +692,282 @@
     </section>
 
 
-    <!-- 6. DATA ANALYTICS & CHARTS VIEW -->
-    <section id="view-analytics" class="space-y-6 hidden">
-      <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs">
-        <h2 class="text-2xl font-black text-gov-dark">National MPLADS Data Analytics</h2>
-        <p class="text-xs text-slate-500 font-medium mt-0.5">Deterministic statistics computed directly from connected projects and payment event datasets.</p>
+    <!-- 6. PROJECT MONITORING & ML ANOMALY DETECTION VIEW -->
+    <section id="view-monitoring" class="space-y-6 hidden">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-xs">
+        <div>
+          <div class="text-xs font-bold text-gov-primary uppercase tracking-wider">AI & Data Feature Intelligence</div>
+          <h2 class="text-2xl font-black text-gov-dark mt-0.5">Project Monitoring & ML Anomaly Screening</h2>
+          <p class="text-xs text-slate-500 font-medium mt-0.5">Statistical Isolation Forest screening & feature engineering based on real project & payment datasets.</p>
+        </div>
+        <div class="flex items-center gap-3">
+          <button onclick="triggerRetrainMl()" class="bg-gov-dark hover:bg-slate-800 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition shadow-xs flex items-center gap-1.5">
+            <span>⚙️ Retrain Isolation Forest Model</span>
+          </button>
+        </div>
       </div>
 
-      <!-- Chart Grid -->
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <!-- State-Wise Works Chart -->
-        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-3">
-          <h3 class="font-bold text-slate-800 text-base">State-Wise Project Distribution</h3>
-          <p class="text-xs text-slate-500">Total works sanctioned by state/UT.</p>
-          <div class="h-72">
-            <canvas id="chart-states"></canvas>
+      <!-- Disclaimer Banner -->
+      <div class="bg-blue-50 border border-blue-200 text-blue-900 p-4 rounded-2xl text-xs space-y-1">
+        <div class="font-bold text-blue-950 flex items-center gap-2">
+          <span>ℹ️ ML Anomaly Screening Disclaimer</span>
+        </div>
+        <p class="leading-relaxed">
+          The Isolation Forest machine learning model generates an <strong>Anomaly Risk Score (0-100)</strong> based on statistical feature vectors (budget variance, lead times, disbursement ratios, payment tranches, description length). <strong>A potential anomaly indicates statistical variance from baseline dataset patterns and serves as a screening signal, not proof of wrongdoing or illegal activity.</strong>
+        </p>
+      </div>
+
+      <!-- Monitoring KPI Summary Cards -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" id="monitoring-kpi-grid">
+        <!-- Budget Monitoring Card -->
+        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-2">
+          <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Budget Monitoring</div>
+          <div class="text-2xl font-black text-slate-800" id="mon-kpi-budget-status">--</div>
+          <div class="text-xs space-y-1 pt-1 border-t border-slate-100">
+            <div class="flex justify-between text-slate-600"><span>Within Sanction:</span> <strong id="mon-kpi-within-sanction" class="text-emerald-700">--</strong></div>
+            <div class="flex justify-between text-slate-600"><span>Fully Disbursed:</span> <strong id="mon-kpi-fully-disbursed" class="text-blue-700">--</strong></div>
+            <div class="flex justify-between text-slate-600"><span>Potential Overrun:</span> <strong id="mon-kpi-overruns" class="text-red-700">--</strong></div>
           </div>
         </div>
 
-        <!-- Portal Execution Status Chart -->
-        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-3">
-          <h3 class="font-bold text-slate-800 text-base">Portal Execution Stages</h3>
-          <p class="text-xs text-slate-500">Breakdown of projects across execution phases.</p>
-          <div class="h-72">
-            <canvas id="chart-status"></canvas>
+        <!-- Delay Monitoring Card -->
+        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-2">
+          <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Schedule Delay Monitoring</div>
+          <div class="text-2xl font-black text-slate-800" id="mon-kpi-delay-status">--</div>
+          <div class="text-xs space-y-1 pt-1 border-t border-slate-100">
+            <div class="flex justify-between text-slate-600"><span>On Time (Completed):</span> <strong id="mon-kpi-ontime" class="text-emerald-700">--</strong></div>
+            <div class="flex justify-between text-slate-600"><span>Delayed (Completed):</span> <strong id="mon-kpi-delayed" class="text-red-700">--</strong></div>
+            <div class="flex justify-between text-slate-600"><span>Ongoing (Over Target):</span> <strong id="mon-kpi-ongoing-delayed" class="text-amber-700">--</strong></div>
           </div>
+        </div>
+
+        <!-- Payment Analysis Card -->
+        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-2">
+          <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Payment Pattern Analysis</div>
+          <div class="text-2xl font-black text-emerald-700" id="mon-kpi-total-payments">--</div>
+          <div class="text-xs space-y-1 pt-1 border-t border-slate-100">
+            <div class="flex justify-between text-slate-600"><span>Avg Tranche Amount:</span> <strong id="mon-kpi-avg-tranche" class="text-slate-800">--</strong></div>
+            <div class="flex justify-between text-slate-600"><span>Multi-Tranche Works:</span> <strong id="mon-kpi-multi-tranche" class="text-blue-700">--</strong></div>
+            <div class="flex justify-between text-slate-600"><span>Vendor Concentration:</span> <strong id="mon-kpi-vendor-conc" class="text-purple-700">--</strong></div>
+          </div>
+        </div>
+
+        <!-- ML Anomaly Card -->
+        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-2">
+          <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Isolation Forest ML Model</div>
+          <div class="text-2xl font-black text-purple-800" id="mon-kpi-ml-anomalies">--</div>
+          <div class="text-xs space-y-1 pt-1 border-t border-slate-100">
+            <div class="flex justify-between text-slate-600"><span>Projects Analyzed:</span> <strong id="mon-kpi-ml-analyzed" class="text-slate-800">--</strong></div>
+            <div class="flex justify-between text-slate-600"><span>Contamination Rate:</span> <strong class="text-slate-800">5.0%</strong></div>
+            <div class="flex justify-between text-slate-600"><span>Anomaly Ratio:</span> <strong id="mon-kpi-ml-pct" class="text-purple-700">--%</strong></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Monitoring Filter Bar -->
+      <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-3">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3 text-xs">
+          <!-- Search input -->
+          <div class="lg:col-span-2">
+            <label class="block font-semibold text-slate-600 mb-1">Search ID / Title / MP</label>
+            <input type="text" id="mon-filter-q" placeholder="Enter Work ID, title, MP..." class="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-gov-primary" onkeyup="if(event.key==='Enter') applyMonitoringFilter()">
+          </div>
+
+          <!-- State -->
+          <div>
+            <label class="block font-semibold text-slate-600 mb-1">State</label>
+            <select id="mon-filter-state" class="w-full border border-slate-300 rounded-lg px-2.5 py-2 focus:ring-2 focus:ring-gov-primary" onchange="onMonStateChange(this.value)">
+              <option value="">All States</option>
+            </select>
+          </div>
+
+          <!-- District -->
+          <div>
+            <label class="block font-semibold text-slate-600 mb-1">District</label>
+            <select id="mon-filter-district" class="w-full border border-slate-300 rounded-lg px-2.5 py-2 focus:ring-2 focus:ring-gov-primary" onchange="applyMonitoringFilter()">
+              <option value="">All Districts</option>
+            </select>
+          </div>
+
+          <!-- Delay Status -->
+          <div>
+            <label class="block font-semibold text-slate-600 mb-1">Delay Status</label>
+            <select id="mon-filter-delay" class="w-full border border-slate-300 rounded-lg px-2.5 py-2 focus:ring-2 focus:ring-gov-primary" onchange="applyMonitoringFilter()">
+              <option value="">All Delay Statuses</option>
+              <option value="ON_TIME">ON_TIME</option>
+              <option value="DELAYED">DELAYED</option>
+              <option value="ONGOING_WITHIN_TARGET">ONGOING_WITHIN_TARGET</option>
+              <option value="ONGOING_DELAYED">ONGOING_DELAYED</option>
+            </select>
+          </div>
+
+          <!-- Budget Status -->
+          <div>
+            <label class="block font-semibold text-slate-600 mb-1">Budget Status</label>
+            <select id="mon-filter-budget" class="w-full border border-slate-300 rounded-lg px-2.5 py-2 focus:ring-2 focus:ring-gov-primary" onchange="applyMonitoringFilter()">
+              <option value="">All Budget Statuses</option>
+              <option value="WITHIN_SANCTION">WITHIN_SANCTION</option>
+              <option value="FULLY_DISBURSED">FULLY_DISBURSED</option>
+              <option value="POTENTIAL_BUDGET_OVERRUN">POTENTIAL_BUDGET_OVERRUN</option>
+            </select>
+          </div>
+
+          <!-- ML Anomaly Status -->
+          <div>
+            <label class="block font-semibold text-slate-600 mb-1">ML Status</label>
+            <select id="mon-filter-anomaly" class="w-full border border-slate-300 rounded-lg px-2.5 py-2 focus:ring-2 focus:ring-gov-primary" onchange="applyMonitoringFilter()">
+              <option value="">All ML Statuses</option>
+              <option value="POTENTIAL ANOMALY">POTENTIAL ANOMALY</option>
+              <option value="NORMAL">NORMAL</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between border-t border-slate-100 pt-3 text-xs">
+          <div class="text-slate-500 font-medium">
+            Showing <span id="mon-results-count" class="font-bold text-gov-primary">0</span> projects matching monitoring criteria.
+          </div>
+          <div class="flex items-center gap-2">
+            <button onclick="resetMonitoringFilters()" class="text-xs font-medium text-slate-500 hover:text-slate-800 px-3 py-1.5 rounded-lg border border-slate-200">Reset Filters</button>
+            <button onclick="applyMonitoringFilter()" class="bg-gov-primary hover:bg-blue-900 text-white font-bold px-4 py-1.5 rounded-lg text-xs shadow-xs">Apply Filters</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Monitoring Projects Table -->
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full gov-table text-left">
+            <thead>
+              <tr>
+                <th>Work ID & Category</th>
+                <th>Work Title & Location</th>
+                <th>Sanction / Disbursed</th>
+                <th>Disb. Ratio</th>
+                <th>Delay SLA Status</th>
+                <th>Tranches</th>
+                <th>ML Risk Score</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="mon-table-body">
+              <tr>
+                <td colspan="8" class="text-center py-8 text-slate-400">Loading monitoring data...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Table Pagination -->
+        <div class="p-4 border-t border-slate-200 flex items-center justify-between text-xs text-slate-600">
+          <div>
+            Page <span id="mon-page-num" class="font-bold">1</span> of <span id="mon-total-pages">...</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="mon-prev-btn" onclick="changeMonPage(-1)" class="px-3 py-1.5 rounded-md border border-slate-300 hover:bg-slate-100 disabled:opacity-50">Previous</button>
+            <button id="mon-next-btn" onclick="changeMonPage(1)" class="px-3 py-1.5 rounded-md border border-slate-300 hover:bg-slate-100 disabled:opacity-50">Next</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- 7. GOVERNANCE ALERTS VIEW -->
+    <section id="view-alerts" class="space-y-6 hidden">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-xs">
+        <div>
+          <div class="text-xs font-bold text-red-700 uppercase tracking-wider">Automated Risk Monitoring</div>
+          <h2 class="text-2xl font-black text-gov-dark mt-0.5">Project Governance Screening Alerts</h2>
+          <p class="text-xs text-slate-500 font-medium mt-0.5">Real-time alerts triggered by budget overruns, execution delays, ML statistical anomalies, and payment concentration spikes.</p>
+        </div>
+        <div class="text-xs bg-red-100 text-red-900 border border-red-200 px-3.5 py-2 rounded-xl font-bold">
+          <span id="alerts-count-badge">0</span> Active Screening Alerts
+        </div>
+      </div>
+
+      <!-- Alerts Grid / Container -->
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+        <div class="p-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between text-xs">
+          <h3 class="font-bold text-slate-800">Generated Governance Screening Alerts</h3>
+          <button onclick="loadAlertsView()" class="text-gov-primary font-bold hover:underline">🔄 Refresh Alerts</button>
+        </div>
+        <div class="divide-y divide-slate-100" id="alerts-container">
+          <div class="p-6 text-center text-slate-400">Loading alerts...</div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- 8. DATA ANALYTICS & 10 DYNAMIC CHARTS VIEW -->
+    <section id="view-analytics" class="space-y-6 hidden">
+      <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs">
+        <h2 class="text-2xl font-black text-gov-dark">National MPLADS Data Analytics (10 Dynamic Charts)</h2>
+        <p class="text-xs text-slate-500 font-medium mt-0.5">Deterministic statistics and feature distributions computed directly from all_states_projects.csv & payment event datasets.</p>
+      </div>
+
+      <!-- 10 Chart Grid -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- 1. State-Wise Works Chart -->
+        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-3">
+          <h3 class="font-bold text-slate-800 text-base">1. State-Wise Project Count</h3>
+          <p class="text-xs text-slate-500">Total sanctioned projects across Indian states.</p>
+          <div class="h-72"><canvas id="chart-states"></canvas></div>
+        </div>
+
+        <!-- 2. Completion Status Chart -->
+        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-3">
+          <h3 class="font-bold text-slate-800 text-base">2. Work Completion Distribution</h3>
+          <p class="text-xs text-slate-500">Completed vs ongoing project breakdown.</p>
+          <div class="h-72"><canvas id="chart-status"></canvas></div>
+        </div>
+
+        <!-- 3. Schedule Delay Status Chart -->
+        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-3">
+          <h3 class="font-bold text-slate-800 text-base">3. Schedule Delay Classification</h3>
+          <p class="text-xs text-slate-500">Breakdown into On Time, Delayed, Ongoing Target, Ongoing Delayed.</p>
+          <div class="h-72"><canvas id="chart-delay"></canvas></div>
+        </div>
+
+        <!-- 4. Budget Monitoring Status Chart -->
+        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-3">
+          <h3 class="font-bold text-slate-800 text-base">4. Budget Monitoring Classification</h3>
+          <p class="text-xs text-slate-500">Within Sanction vs Fully Disbursed vs Potential Overrun.</p>
+          <div class="h-72"><canvas id="chart-budget"></canvas></div>
+        </div>
+
+        <!-- 5. Payment Tranches Distribution Chart -->
+        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-3">
+          <h3 class="font-bold text-slate-800 text-base">5. Payment Tranche Frequency</h3>
+          <p class="text-xs text-slate-500">Distribution of projects by number of payment tranches.</p>
+          <div class="h-72"><canvas id="chart-tranches"></canvas></div>
+        </div>
+
+        <!-- 6. ML Anomaly Screening Chart -->
+        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-3">
+          <h3 class="font-bold text-slate-800 text-base">6. ML Isolation Forest Screening</h3>
+          <p class="text-xs text-slate-500">Normal projects vs Potential ML statistical anomalies.</p>
+          <div class="h-72"><canvas id="chart-anomalies"></canvas></div>
+        </div>
+
+        <!-- 7. Monthly Payment Disbursed Trend Chart -->
+        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-3">
+          <h3 class="font-bold text-slate-800 text-base">7. Monthly Expenditure Trend</h3>
+          <p class="text-xs text-slate-500">Total fund disbursed by month from payment events.</p>
+          <div class="h-72"><canvas id="chart-monthly-payments"></canvas></div>
+        </div>
+
+        <!-- 8. Top Disbursed Outlay by State Chart -->
+        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-3">
+          <h3 class="font-bold text-slate-800 text-base">8. State-Wise Disbursed Outlay (₹ Cr)</h3>
+          <p class="text-xs text-slate-500">Financial outlay disbursed across top states.</p>
+          <div class="h-72"><canvas id="chart-risk-by-state"></canvas></div>
         </div>
       </div>
 
       <!-- State Summary Data Table -->
       <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
         <div class="p-4 border-b border-slate-200 bg-slate-50">
-          <h3 class="font-bold text-slate-800 text-sm">State-Wise Financial Summary (Calculated from Real Datasets)</h3>
+          <h3 class="font-bold text-slate-800 text-sm">State-Wise Financial & Delay Summary</h3>
         </div>
         <div class="overflow-x-auto">
           <table class="w-full gov-table text-left">
@@ -697,7 +977,6 @@
                 <th>Total Projects</th>
                 <th>Sanctioned Outlay</th>
                 <th>Disbursed Outlay</th>
-                <th>Completed Works</th>
                 <th>Completion Rate</th>
               </tr>
             </thead>
@@ -707,6 +986,7 @@
           </table>
         </div>
       </div>
+    </section>
     </section>
 
   </main>
@@ -1027,6 +1307,151 @@
 
       <div class="flex justify-end pt-2 border-t border-slate-200">
         <button onclick="closeModal('modal-detail')" class="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-semibold text-xs">Close</button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- E. Project Inspect View Modal (Monitoring & ML Screening Profile) -->
+  <div id="modal-inspect" class="fixed inset-0 modal-backdrop z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl max-w-4xl w-full p-6 shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto">
+      <div class="flex items-start justify-between border-b border-slate-200 pb-3">
+        <div>
+          <div class="flex items-center gap-2">
+            <span id="ins-anomaly-badge" class="badge-status">...</span>
+            <span id="ins-delay-badge" class="badge-status">...</span>
+            <span id="ins-budget-badge" class="badge-status">...</span>
+          </div>
+          <h3 id="ins-title" class="font-bold text-gov-dark text-lg mt-1">...</h3>
+          <div class="text-xs text-slate-500 font-mono" id="ins-wid">...</div>
+        </div>
+        <button onclick="closeModal('modal-inspect')" class="text-slate-400 hover:text-slate-600 text-2xl font-bold">&times;</button>
+      </div>
+
+      <!-- Project Basic Info Grid -->
+      <div class="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs bg-slate-50 p-4 rounded-xl border border-slate-200">
+        <div>
+          <div class="text-slate-500 font-medium">State & District:</div>
+          <div id="ins-geo" class="font-semibold text-slate-800 mt-0.5">...</div>
+        </div>
+        <div>
+          <div class="text-slate-500 font-medium">Constituency:</div>
+          <div id="ins-constituency" class="font-semibold text-slate-800 mt-0.5">...</div>
+        </div>
+        <div>
+          <div class="text-slate-500 font-medium">Recommending MP:</div>
+          <div id="ins-mp" class="font-semibold text-gov-primary mt-0.5">...</div>
+        </div>
+        <div>
+          <div class="text-slate-500 font-medium">Category:</div>
+          <div id="ins-category" class="font-semibold text-slate-800 mt-0.5">...</div>
+        </div>
+      </div>
+
+      <!-- ML Anomaly Screening Vector Card -->
+      <div class="bg-purple-50 border border-purple-200 p-5 rounded-2xl space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="text-lg">🤖</span>
+            <h4 class="font-bold text-purple-950 text-sm">Isolation Forest ML Screening Profile</h4>
+          </div>
+          <div class="text-right">
+            <div class="text-[11px] text-purple-800 font-medium">Anomaly Risk Score</div>
+            <div id="ins-ml-risk-score" class="text-2xl font-black text-purple-900">0/100</div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+          <div class="bg-white p-2.5 rounded-lg border border-purple-100">
+            <div class="text-slate-500">Raw Anomaly Score:</div>
+            <div id="ins-ml-raw" class="font-mono font-bold text-purple-900">0.0000</div>
+          </div>
+          <div class="bg-white p-2.5 rounded-lg border border-purple-100">
+            <div class="text-slate-500">Prediction:</div>
+            <div id="ins-ml-pred" class="font-mono font-bold text-slate-800">1 (Normal)</div>
+          </div>
+          <div class="bg-white p-2.5 rounded-lg border border-purple-100">
+            <div class="text-slate-500">Screening Status:</div>
+            <div id="ins-ml-status" class="font-bold text-purple-900">NORMAL</div>
+          </div>
+          <div class="bg-white p-2.5 rounded-lg border border-purple-100">
+            <div class="text-slate-500">Feature Count:</div>
+            <div class="font-bold text-slate-800">7 Numeric Features</div>
+          </div>
+        </div>
+
+        <!-- 7 Feature Contribution List -->
+        <div class="bg-white p-3 rounded-xl border border-purple-100 text-xs space-y-1">
+          <div class="font-semibold text-purple-950 mb-1.5">7 Machine Learning Feature Vector Inputs:</div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-[11px]" id="ins-ml-features-list">
+            <!-- Dynamically rendered -->
+          </div>
+        </div>
+
+        <div class="text-[11px] text-purple-900 bg-white/60 p-2.5 rounded-lg border border-purple-200 leading-relaxed font-medium">
+          ⚠️ <strong>Disclaimer:</strong> Potential anomaly indicates that the project's feature pattern differs statistically from other projects in the dataset. It is a screening signal, not proof of wrongdoing.
+        </div>
+      </div>
+
+      <!-- Financial & SLA Details Grid -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+        <!-- Financial Profile -->
+        <div class="bg-white p-4 rounded-xl border border-slate-200 space-y-2">
+          <h4 class="font-bold text-slate-800 uppercase tracking-wide border-b border-slate-100 pb-1.5">Financial Monitoring Profile</h4>
+          <div class="space-y-1.5">
+            <div class="flex justify-between"><span class="text-slate-500">Sanctioned Outlay:</span> <strong id="ins-sanction-amt" class="text-slate-800">--</strong></div>
+            <div class="flex justify-between"><span class="text-slate-500">Total Disbursed:</span> <strong id="ins-disbursed-amt" class="text-emerald-700">--</strong></div>
+            <div class="flex justify-between"><span class="text-slate-500">Disbursement Ratio:</span> <strong id="ins-disb-ratio" class="text-gov-primary">--</strong></div>
+            <div class="flex justify-between"><span class="text-slate-500">Remaining Budget / Variance:</span> <strong id="ins-variance-amt" class="text-slate-800">--</strong></div>
+            <div class="flex justify-between"><span class="text-slate-500">Budget Status:</span> <strong id="ins-budget-status-val">--</strong></div>
+          </div>
+        </div>
+
+        <!-- SLA Timeline Profile -->
+        <div class="bg-white p-4 rounded-xl border border-slate-200 space-y-2">
+          <h4 class="font-bold text-slate-800 uppercase tracking-wide border-b border-slate-100 pb-1.5">Delay & SLA Profile</h4>
+          <div class="space-y-1.5">
+            <div class="flex justify-between"><span class="text-slate-500">Recommended Date:</span> <strong id="ins-rec-date">--</strong></div>
+            <div class="flex justify-between"><span class="text-slate-500">Sanction Date:</span> <strong id="ins-sanc-date">--</strong></div>
+            <div class="flex justify-between"><span class="text-slate-500">Expected Completion:</span> <strong id="ins-exp-date">--</strong></div>
+            <div class="flex justify-between"><span class="text-slate-500">Actual Completion Date:</span> <strong id="ins-comp-date">--</strong></div>
+            <div class="flex justify-between"><span class="text-slate-500">Sanction Lead Time:</span> <strong id="ins-lead-time">-- days</strong></div>
+            <div class="flex justify-between"><span class="text-slate-500">Schedule Delay:</span> <strong id="ins-schedule-delay">-- days</strong></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Payment Analysis & Tranches -->
+      <div class="bg-white p-4 rounded-xl border border-slate-200 space-y-3 text-xs">
+        <div class="flex items-center justify-between border-b border-slate-100 pb-2">
+          <h4 class="font-bold text-slate-800 uppercase tracking-wide">Payment Tranches & Vendor Analysis</h4>
+          <span id="ins-pay-count" class="text-[11px] font-semibold text-slate-500">--</span>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] bg-slate-50 p-2.5 rounded-lg">
+          <div><span class="text-slate-500">First Payment:</span> <div id="ins-pay-first" class="font-semibold">--</div></div>
+          <div><span class="text-slate-500">Latest Payment:</span> <div id="ins-pay-last" class="font-semibold">--</div></div>
+          <div><span class="text-slate-500">Max Single Tranche Ratio:</span> <div id="ins-pay-max-ratio" class="font-bold text-purple-700">--</div></div>
+          <div><span class="text-slate-500">Unique Vendors:</span> <div id="ins-pay-vendors" class="font-semibold">--</div></div>
+        </div>
+        <div class="border border-slate-200 rounded-lg overflow-hidden max-h-40 overflow-y-auto">
+          <table class="w-full gov-table text-left">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Vendor Name</th>
+                <th>Status</th>
+                <th>Disbursed Amount</th>
+              </tr>
+            </thead>
+            <tbody id="ins-payments-tbody">
+              <tr><td colspan="4" class="text-center py-4 text-slate-400">No payment events recorded.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="flex justify-end pt-2 border-t border-slate-200">
+        <button onclick="closeModal('modal-inspect')" class="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-semibold text-xs">Close Inspection</button>
       </div>
     </div>
   </div>

@@ -60,6 +60,14 @@ body {
 .badge-completed { background-color: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
 .badge-returned { background-color: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
 
+.badge-anomaly-high { background-color: #fee2e2; color: #991b1b; border: 1px solid #fecaca; font-weight: 700; }
+.badge-anomaly-medium { background-color: #fef3c7; color: #92400e; border: 1px solid #fde68a; font-weight: 600; }
+.badge-anomaly-normal { background-color: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
+
+.badge-delay-delayed { background-color: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+.badge-delay-ontime { background-color: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+.badge-delay-ongoing { background-color: #e0e7ff; color: #3730a3; border: 1px solid #c7d2fe; }
+
 /* Modal Backdrop */
 .modal-backdrop {
   background-color: rgba(15, 23, 42, 0.65);

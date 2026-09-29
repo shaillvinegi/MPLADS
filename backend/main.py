@@ -226,8 +226,9 @@ def get_analytics_overview(
 
 
 @app.get("/api/works")
+@app.get("/api/public/works")
 def get_works(
-    q: Optional[str] = Query(None, description="Search keyword in title, work_id, description"),
+    q: Optional[str] = Query(None, description="Search keyword in title, work_id, description, or mp_name"),
     state: Optional[str] = Query(None),
     district: Optional[str] = Query(None),
     constituency: Optional[str] = Query(None),
@@ -239,46 +240,63 @@ def get_works(
     h_db: sqlite3.Connection = Depends(get_historical_db),
     l_db: sqlite3.Connection = Depends(get_live_db)
 ):
-    """Unified work search & browse across historical CSV data and live application database."""
+    """Unified public work search, filter & summary metrics API across connected datasets."""
     items = []
     total_count = 0
     offset = (page - 1) * limit
 
-    # Helper function to check if a filter parameter is valid and not "All"
     def is_valid_filter(val):
         if not val or not isinstance(val, str):
             return False
         v = val.strip().lower()
         return v != "" and not v.startswith("all")
 
-    # Query Live Works first if scope in ('all', 'live')
+    # 1. Query Live Works if scope in ('all', 'live')
     live_records = []
+    l_sum_sanc = 0.0
+    l_sum_disb = 0.0
+    l_cnt_comp = 0
     if scope in ("all", "live"):
         l_cur = l_db.cursor()
         l_conditions = []
         l_params = []
 
         if q and q.strip():
-            l_conditions.append("(work_id LIKE ? OR title LIKE ? OR description LIKE ?)")
+            l_conditions.append("(work_id LIKE ? OR title LIKE ? OR description LIKE ? OR recommending_mp_name LIKE ?)")
             q_pat = f"%{q.strip()}%"
-            l_params.extend([q_pat, q_pat, q_pat])
+            l_params.extend([q_pat, q_pat, q_pat, q_pat])
         if is_valid_filter(state):
-            l_conditions.append("state = ?")
+            l_conditions.append("UPPER(state) = UPPER(?)")
             l_params.append(state.strip())
         if is_valid_filter(district):
-            l_conditions.append("district = ?")
+            l_conditions.append("UPPER(district) = UPPER(?)")
             l_params.append(district.strip())
         if is_valid_filter(constituency):
-            l_conditions.append("constituency = ?")
+            l_conditions.append("UPPER(constituency) = UPPER(?)")
             l_params.append(constituency.strip())
         if is_valid_filter(category):
-            l_conditions.append("work_category = ?")
+            l_conditions.append("UPPER(work_category) = UPPER(?)")
             l_params.append(category.strip())
         if is_valid_filter(status):
-            l_conditions.append("status = ?")
+            l_conditions.append("UPPER(status) = UPPER(?)")
             l_params.append(status.strip())
 
         l_where = f"WHERE {' AND '.join(l_conditions)}" if l_conditions else ""
+        
+        # Summary for matching live works
+        l_cur.execute(f"""
+            SELECT 
+                COUNT(*) as cnt,
+                COALESCE(SUM(sanction_amount), 0.0) as sum_sanc,
+                COALESCE(SUM(total_disbursed), 0.0) as sum_disb,
+                SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END) as cnt_comp
+            FROM live_works {l_where}
+        """, l_params)
+        l_agg = dict(l_cur.fetchone())
+        l_sum_sanc = l_agg["sum_sanc"] or 0.0
+        l_sum_disb = l_agg["sum_disb"] or 0.0
+        l_cnt_comp = l_agg["cnt_comp"] or 0
+
         l_cur.execute(f"SELECT * FROM live_works {l_where} ORDER BY id DESC", l_params)
         for row in l_cur.fetchall():
             d = dict(row)
@@ -302,47 +320,61 @@ def get_works(
                 "created_at": d["created_at"]
             })
 
-    # Query Historical Works if scope in ('all', 'historical')
+    # 2. Query Historical Works if scope in ('all', 'historical')
     hist_records = []
     hist_total = 0
+    h_sum_sanc = 0.0
+    h_sum_disb = 0.0
+    h_cnt_comp = 0
+
     if scope in ("all", "historical"):
         h_cur = h_db.cursor()
         h_conditions = []
         h_params = []
 
         if q and q.strip():
-            h_conditions.append("(work_id LIKE ? OR work_title LIKE ? OR work_description LIKE ?)")
+            h_conditions.append("(work_id LIKE ? OR work_title LIKE ? OR work_description LIKE ? OR mp_name LIKE ?)")
             q_pat = f"%{q.strip()}%"
-            h_params.extend([q_pat, q_pat, q_pat])
+            h_params.extend([q_pat, q_pat, q_pat, q_pat])
         if is_valid_filter(state):
-            h_conditions.append("state = ?")
+            h_conditions.append("UPPER(state) = UPPER(?)")
             h_params.append(state.strip())
         if is_valid_filter(district):
-            h_conditions.append("district = ?")
+            h_conditions.append("UPPER(district) = UPPER(?)")
             h_params.append(district.strip())
         if is_valid_filter(constituency):
-            h_conditions.append("constituency = ?")
+            h_conditions.append("UPPER(constituency) = UPPER(?)")
             h_params.append(constituency.strip())
         if is_valid_filter(category):
-            h_conditions.append("work_category = ?")
+            h_conditions.append("UPPER(work_category) = UPPER(?)")
             h_params.append(category.strip())
         if is_valid_filter(status):
-            st = status.strip()
+            st = status.strip().upper()
             if st == "COMPLETED":
                 h_conditions.append("work_completion_status = 'COMPLETED'")
             elif st in ("IN_PROGRESS", "SANCTIONED", "ONGOING"):
                 h_conditions.append("work_completion_status != 'COMPLETED'")
             else:
-                h_conditions.append("portal_execution_status = ?")
+                h_conditions.append("UPPER(portal_execution_status) = UPPER(?)")
                 h_params.append(st)
 
         h_where = f"WHERE {' AND '.join(h_conditions)}" if h_conditions else ""
 
-        # Total count
-        h_cur.execute(f"SELECT COUNT(*) FROM historical_projects {h_where}", h_params)
-        hist_total = h_cur.fetchone()[0]
+        # Total count & dynamic aggregates for matching historical works
+        h_cur.execute(f"""
+            SELECT 
+                COUNT(*) as cnt,
+                COALESCE(SUM(sanction_amount), 0.0) as sum_sanc,
+                COALESCE(SUM(total_disbursed), 0.0) as sum_disb,
+                SUM(CASE WHEN work_completion_status = 'COMPLETED' THEN 1 ELSE 0 END) as cnt_comp
+            FROM historical_projects {h_where}
+        """, h_params)
+        h_agg = dict(h_cur.fetchone())
+        hist_total = h_agg["cnt"] or 0
+        h_sum_sanc = h_agg["sum_sanc"] or 0.0
+        h_sum_disb = h_agg["sum_disb"] or 0.0
+        h_cnt_comp = h_agg["cnt_comp"] or 0
 
-        # Calculate limits considering live records
         hist_limit = limit
         hist_offset = max(0, offset - len(live_records))
 
@@ -373,8 +405,12 @@ def get_works(
         hist_records = [dict(r) for r in h_cur.fetchall()]
 
     total_count = len(live_records) + hist_total
+    total_sanction = l_sum_sanc + h_sum_sanc
+    total_disbursed = l_sum_disb + h_sum_disb
+    completed_works = l_cnt_comp + h_cnt_comp
+    ongoing_works = total_count - completed_works
 
-    # Combine results
+    # Combine paginated items
     if offset < len(live_records):
         slice_live = live_records[offset:offset + limit]
         needed_from_hist = limit - len(slice_live)
@@ -382,11 +418,20 @@ def get_works(
     else:
         items = hist_records
 
+    total_pages = (total_count + limit - 1) // limit if total_count > 0 else 1
+
     return {
         "page": page,
         "limit": limit,
         "total": total_count,
-        "total_pages": (total_count + limit - 1) // limit,
+        "total_pages": total_pages,
+        "summary": {
+            "total_works": total_count,
+            "total_sanction_amount": total_sanction,
+            "total_disbursed_amount": total_disbursed,
+            "completed_works": completed_works,
+            "ongoing_works": ongoing_works
+        },
         "items": items
     }
 
@@ -671,6 +716,30 @@ def get_districts_metadata(
         """)
     districts = [r[0] for r in h_cur.fetchall()]
     return {"state": state or "", "districts": districts}
+
+
+@app.get("/api/metadata/constituencies")
+def get_constituencies_metadata(
+    state: Optional[str] = Query(None),
+    district: Optional[str] = Query(None),
+    h_db: sqlite3.Connection = Depends(get_historical_db)
+):
+    """Provides dynamic list of unique constituencies, optionally filtered by state and/or district."""
+    h_cur = h_db.cursor()
+    conditions = ["constituency IS NOT NULL", "TRIM(constituency) != ''"]
+    params = []
+    if state and state.strip() and not state.strip().lower().startswith("all"):
+        conditions.append("UPPER(state) = UPPER(?)")
+        params.append(state.strip())
+    if district and district.strip() and not district.strip().lower().startswith("all"):
+        conditions.append("UPPER(district) = UPPER(?)")
+        params.append(district.strip())
+
+    where_sql = f"WHERE {' AND '.join(conditions)}"
+    h_cur.execute(f"SELECT DISTINCT constituency FROM historical_projects {where_sql} ORDER BY constituency ASC", params)
+    constituencies = [r[0] for r in h_cur.fetchall()]
+    return {"state": state or "", "district": district or "", "constituencies": constituencies}
+
 
 
 # --- District Authority Endpoints ---
@@ -992,6 +1061,512 @@ def update_agency_progress(
         "status": req.status,
         "message": "Progress and expenditure successfully updated."
     }
+
+
+# --- PROJECT MONITORING & ML ANOMALY DETECTION ENDPOINTS ---
+
+from backend.monitoring_ml import init_monitoring_if_needed, run_monitoring_pipeline
+
+@app.on_event("startup")
+def startup_event():
+    conn = sqlite3.connect(HISTORICAL_DB_PATH)
+    try:
+        init_monitoring_if_needed(conn)
+    finally:
+        conn.close()
+
+
+@app.get("/api/monitoring/summary")
+def get_monitoring_summary(
+    state: Optional[str] = Query(None),
+    district: Optional[str] = Query(None),
+    h_db: sqlite3.Connection = Depends(get_historical_db)
+):
+    """Returns dynamic KPI metrics for Budget, Delay, Payment, and ML Anomaly Detection."""
+    h_cur = h_db.cursor()
+
+    def is_valid_filter(val):
+        if not val or not isinstance(val, str):
+            return False
+        v = val.strip().lower()
+        return v != "" and not v.startswith("all")
+
+    conditions = []
+    params = []
+    if is_valid_filter(state):
+        conditions.append("UPPER(state) = UPPER(?)")
+        params.append(state.strip())
+    if is_valid_filter(district):
+        conditions.append("UPPER(district) = UPPER(?)")
+        params.append(district.strip())
+
+    where_sql = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+    # Budget Summary
+    h_cur.execute(f"""
+        SELECT 
+            COUNT(*) as total_projects,
+            SUM(CASE WHEN budget_monitoring_status = 'WITHIN_SANCTION' THEN 1 ELSE 0 END) as within_sanction,
+            SUM(CASE WHEN budget_monitoring_status = 'FULLY_DISBURSED' THEN 1 ELSE 0 END) as fully_disbursed,
+            SUM(CASE WHEN budget_monitoring_status = 'POTENTIAL_BUDGET_OVERRUN' THEN 1 ELSE 0 END) as potential_budget_overruns,
+            SUM(sanction_amount) as total_sanctioned,
+            SUM(total_disbursed) as total_disbursed,
+            AVG(budget_disbursement_ratio) as avg_disbursement_ratio
+        FROM project_monitoring_features
+        {where_sql}
+    """, params)
+    budget_row = dict(h_cur.fetchone())
+
+    # Delay Summary
+    h_cur.execute(f"""
+        SELECT 
+            SUM(CASE WHEN delay_status = 'ON_TIME' THEN 1 ELSE 0 END) as on_time,
+            SUM(CASE WHEN delay_status = 'DELAYED' THEN 1 ELSE 0 END) as delayed,
+            SUM(CASE WHEN delay_status = 'ONGOING_WITHIN_TARGET' THEN 1 ELSE 0 END) as ongoing_within_target,
+            SUM(CASE WHEN delay_status = 'ONGOING_DELAYED' THEN 1 ELSE 0 END) as ongoing_delayed,
+            AVG(actual_duration_days) as avg_completion_duration_days,
+            AVG(schedule_delay_days) as avg_schedule_delay_days
+        FROM project_monitoring_features
+        {where_sql}
+    """, params)
+    delay_row = dict(h_cur.fetchone())
+
+    # Payment Summary
+    h_cur.execute(f"""
+        SELECT 
+            SUM(payment_tranche_count) as total_payment_events,
+            AVG(mean_tranche_amount) as avg_payment_tranche,
+            SUM(CASE WHEN payment_tranche_count >= 2 THEN 1 ELSE 0 END) as multiple_tranche_projects,
+            SUM(CASE WHEN max_single_tranche_ratio >= 0.9 THEN 1 ELSE 0 END) as vendor_concentration_projects
+        FROM project_monitoring_features
+        {where_sql}
+    """, params)
+    payment_row = dict(h_cur.fetchone())
+
+    # ML Anomaly Summary
+    h_cur.execute(f"""
+        SELECT 
+            COUNT(*) as projects_analyzed,
+            SUM(CASE WHEN anomaly_prediction = 1 THEN 1 ELSE 0 END) as normal_projects,
+            SUM(CASE WHEN anomaly_prediction = -1 THEN 1 ELSE 0 END) as potential_anomalies
+        FROM project_monitoring_features
+        {where_sql}
+    """, params)
+    ml_row = dict(h_cur.fetchone())
+
+    # Highest anomaly-score projects
+    h_cur.execute(f"""
+        SELECT work_id, state, district, constituency, mp_name, work_title, sanction_amount, total_disbursed, raw_anomaly_score, anomaly_risk_score, anomaly_status
+        FROM project_monitoring_features
+        {where_sql}
+        ORDER BY anomaly_risk_score DESC
+        LIMIT 5
+    """, params)
+    highest_anomalies = [dict(r) for r in h_cur.fetchall()]
+
+    analyzed = ml_row['projects_analyzed'] or 0
+    anomalies = ml_row['potential_anomalies'] or 0
+    anomaly_pct = round((anomalies / analyzed * 100), 2) if analyzed > 0 else 0.0
+
+    return {
+        "budget_monitoring": budget_row,
+        "delay_monitoring": delay_row,
+        "payment_analysis": payment_row,
+        "ml_anomaly_detection": {
+            "projects_analyzed": analyzed,
+            "normal_projects": ml_row['normal_projects'] or 0,
+            "potential_anomalies": anomalies,
+            "anomaly_pct": anomaly_pct,
+            "highest_anomaly_score_projects": highest_anomalies
+        }
+    }
+
+
+@app.get("/api/monitoring/works")
+def get_monitoring_works(
+    q: Optional[str] = Query(None),
+    state: Optional[str] = Query(None),
+    district: Optional[str] = Query(None),
+    completion_status: Optional[str] = Query(None),
+    delay_status: Optional[str] = Query(None),
+    budget_status: Optional[str] = Query(None),
+    anomaly_status: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    h_db: sqlite3.Connection = Depends(get_historical_db)
+):
+    """Searchable & filterable monitoring dataset table with ML anomaly scores."""
+    h_cur = h_db.cursor()
+
+    def is_valid_filter(val):
+        if not val or not isinstance(val, str):
+            return False
+        v = val.strip().lower()
+        return v != "" and not v.startswith("all")
+
+    conditions = []
+    params = []
+
+    if q and q.strip():
+        conditions.append("(work_id LIKE ? OR work_title LIKE ? OR mp_name LIKE ?)")
+        pat = f"%{q.strip()}%"
+        params.extend([pat, pat, pat])
+
+    if is_valid_filter(state):
+        conditions.append("UPPER(state) = UPPER(?)")
+        params.append(state.strip())
+
+    if is_valid_filter(district):
+        conditions.append("UPPER(district) = UPPER(?)")
+        params.append(district.strip())
+
+    if is_valid_filter(completion_status):
+        conditions.append("work_completion_status = ?")
+        params.append(completion_status.strip())
+
+    if is_valid_filter(delay_status):
+        conditions.append("delay_status = ?")
+        params.append(delay_status.strip())
+
+    if is_valid_filter(budget_status):
+        conditions.append("budget_monitoring_status = ?")
+        params.append(budget_status.strip())
+
+    if is_valid_filter(anomaly_status):
+        conditions.append("anomaly_status = ?")
+        params.append(anomaly_status.strip())
+
+    where_sql = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+    h_cur.execute(f"SELECT COUNT(*) FROM project_monitoring_features {where_sql}", params)
+    total_records = h_cur.fetchone()[0]
+
+    offset = (page - 1) * limit
+    h_cur.execute(f"""
+        SELECT * FROM project_monitoring_features
+        {where_sql}
+        ORDER BY anomaly_risk_score DESC, sanction_amount DESC
+        LIMIT ? OFFSET ?
+    """, params + [limit, offset])
+
+    items = [dict(r) for r in h_cur.fetchall()]
+    total_pages = (total_records + limit - 1) // limit if total_records > 0 else 1
+
+    return {
+        "total": total_records,
+        "page": page,
+        "limit": limit,
+        "total_pages": total_pages,
+        "items": items
+    }
+
+
+@app.get("/api/monitoring/work/{work_id:path}")
+def get_monitoring_work_detail(
+    work_id: str,
+    h_db: sqlite3.Connection = Depends(get_historical_db),
+    l_db: sqlite3.Connection = Depends(get_live_db)
+):
+    """Returns comprehensive project inspection detail with ML anomaly features & payments."""
+    h_cur = h_db.cursor()
+    l_cur = l_db.cursor()
+
+    # Query monitoring features table
+    h_cur.execute("SELECT * FROM project_monitoring_features WHERE work_id = ?", (work_id,))
+    row = h_cur.fetchone()
+
+    if not row:
+        # Check live DB
+        l_cur.execute("SELECT * FROM live_works WHERE work_id = ?", (work_id,))
+        l_row = l_cur.fetchone()
+        if not l_row:
+            raise HTTPException(status_code=404, detail=f"Work with ID '{work_id}' not found.")
+        d = dict(l_row)
+        return {
+            "source": "live",
+            "project_info": {
+                "work_id": d["work_id"],
+                "state": d["state"],
+                "district": d["district"],
+                "constituency": d["constituency"],
+                "mp_name": d["recommending_mp_name"],
+                "work_title": d["title"],
+                "work_description": d["description"],
+                "work_category": d["work_category"]
+            },
+            "financial_info": {
+                "sanction_amount": d["sanction_amount"] or d["estimated_amount"],
+                "total_disbursed": d["total_disbursed"],
+                "remaining_sanction": (d["sanction_amount"] or d["estimated_amount"]) - (d["total_disbursed"] or 0),
+                "disbursement_ratio": (d["total_disbursed"] or 0) / (d["sanction_amount"] or d["estimated_amount"]) if (d["sanction_amount"] or d["estimated_amount"]) > 0 else 0,
+                "budget_monitoring_status": "POTENTIAL_BUDGET_OVERRUN" if (d["total_disbursed"] or 0) > (d["sanction_amount"] or d["estimated_amount"]) else "WITHIN_SANCTION"
+            },
+            "timeline": {
+                "recommended_date": d["recommended_date"],
+                "sanction_date": d["sanction_date"],
+                "expected_completion_date_proxy": "N/A",
+                "completion_date": d["completion_date"],
+                "delay_status": d["status"]
+            },
+            "payments": [],
+            "ml_monitoring": {
+                "anomaly_score": 0.0,
+                "anomaly_status": "LIVE RECORD (NOT IN HISTORICAL MODEL)",
+                "anomaly_risk_score": 0.0,
+                "disclaimer": "Live application records are processed in the real-time workflow database."
+            }
+        }
+
+    p = dict(row)
+
+    # Fetch payment events for this work_id
+    h_cur.execute("""
+        SELECT expenditure_date, vendor_name_raw, vendor_name_normalized, payment_status, reported_fund_disbursed_amount, source_serial_number
+        FROM historical_payment_events
+        WHERE work_id = ?
+        ORDER BY expenditure_date ASC
+    """, (work_id,))
+    payments = [dict(r) for r in h_cur.fetchall()]
+
+    return {
+        "source": "historical",
+        "project_info": {
+            "work_id": p["work_id"],
+            "state": p["state"],
+            "district": p["district"],
+            "constituency": p["constituency"],
+            "mp_name": p["mp_name"],
+            "work_title": p["work_title"],
+            "work_description": p["work_description"],
+            "work_category": p["work_category"]
+        },
+        "financial_info": {
+            "sanction_amount": p["sanction_amount"],
+            "total_disbursed": p["total_disbursed"],
+            "remaining_sanction": p["budget_variance_amount"],
+            "disbursement_ratio": round(p["budget_disbursement_ratio"], 4),
+            "budget_monitoring_status": p["budget_monitoring_status"]
+        },
+        "timeline": {
+            "recommended_date": p["recommended_date"],
+            "sanction_date": p["sanction_date"],
+            "expected_completion_date_proxy": p["expected_completion_date_proxy"],
+            "completion_date": p["completion_date"],
+            "sanction_lead_time_days": p["sanction_lead_time_days"],
+            "expected_duration_days": p["expected_duration_days"],
+            "actual_duration_days": p["actual_duration_days"],
+            "schedule_delay_days": p["schedule_delay_days"],
+            "delay_status": p["delay_status"]
+        },
+        "payment_info": {
+            "payment_tranche_count": p["payment_tranche_count"],
+            "first_payment_date": p["first_payment_date"],
+            "latest_payment_date": p["latest_payment_date"],
+            "payment_span_days": p["payment_span_days"],
+            "mean_tranche_amount": p["mean_tranche_amount"],
+            "max_single_tranche_ratio": round(p["max_single_tranche_ratio"], 4),
+            "vendor_unique_count": p["vendor_unique_count"],
+            "payments_list": payments
+        },
+        "ml_monitoring": {
+            "raw_anomaly_score": round(p["raw_anomaly_score"], 4),
+            "anomaly_prediction": p["anomaly_prediction"],
+            "anomaly_status": p["anomaly_status"],
+            "anomaly_risk_score": p["anomaly_risk_score"],
+            "features_contributing": {
+                "sanction_amount": p["sanction_amount"],
+                "total_disbursed": p["total_disbursed"],
+                "disbursement_ratio": round(p["budget_disbursement_ratio"], 4),
+                "sanction_lead_time_days": p["sanction_lead_time_days"],
+                "payment_tranches": p["payment_tranche_count"],
+                "max_tranche_ratio": round(p["max_single_tranche_ratio"], 4),
+                "description_length": p["work_description_length"]
+            },
+            "disclaimer": "Potential anomaly indicates that the project's feature pattern differs statistically from other projects in the dataset. It is a screening signal, not proof of wrongdoing."
+        }
+    }
+
+
+@app.get("/api/monitoring/alerts")
+def get_monitoring_alerts(
+    state: Optional[str] = Query(None),
+    district: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    h_db: sqlite3.Connection = Depends(get_historical_db)
+):
+    """Returns deterministic alerts for potential budget overruns, schedule delays, ML anomalies, and payment spikes."""
+    h_cur = h_db.cursor()
+
+    def is_valid_filter(val):
+        if not val or not isinstance(val, str):
+            return False
+        v = val.strip().lower()
+        return v != "" and not v.startswith("all")
+
+    conditions = []
+    params = []
+    if is_valid_filter(state):
+        conditions.append("UPPER(state) = UPPER(?)")
+        params.append(state.strip())
+    if is_valid_filter(district):
+        conditions.append("UPPER(district) = UPPER(?)")
+        params.append(district.strip())
+
+    where_sql = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+    h_cur.execute(f"""
+        SELECT work_id, state, district, constituency, mp_name, work_title, sanction_amount, total_disbursed,
+               budget_monitoring_status, delay_status, payment_tranche_count, max_single_tranche_ratio,
+               anomaly_status, anomaly_risk_score
+        FROM project_monitoring_features
+        {where_sql}
+        ORDER BY anomaly_risk_score DESC, schedule_delay_days DESC
+        LIMIT ?
+    """, params + [limit])
+
+    rows = [dict(r) for r in h_cur.fetchall()]
+    alerts = []
+
+    for r in rows:
+        # 1. Budget Alert
+        if r["budget_monitoring_status"] == "POTENTIAL_BUDGET_OVERRUN":
+            alerts.append({
+                "work_id": r["work_id"],
+                "state": r["state"],
+                "district": r["district"],
+                "work_title": r["work_title"],
+                "alert_type": "Potential Budget Overrun",
+                "severity": "HIGH",
+                "measured_value": f"Disbursed {r['total_disbursed']} > Sanctioned {r['sanction_amount']}",
+                "anomaly_risk_score": r["anomaly_risk_score"]
+            })
+        # 2. Delay Alert
+        if r["delay_status"] in ("DELAYED", "ONGOING_DELAYED"):
+            alerts.append({
+                "work_id": r["work_id"],
+                "state": r["state"],
+                "district": r["district"],
+                "work_title": r["work_title"],
+                "alert_type": "Delayed Project",
+                "severity": "MEDIUM",
+                "measured_value": f"Status: {r['delay_status']}",
+                "anomaly_risk_score": r["anomaly_risk_score"]
+            })
+        # 3. ML Anomaly Alert
+        if r["anomaly_status"] == "POTENTIAL ANOMALY":
+            alerts.append({
+                "work_id": r["work_id"],
+                "state": r["state"],
+                "district": r["district"],
+                "work_title": r["work_title"],
+                "alert_type": "Potential ML Anomaly",
+                "severity": "HIGH" if r["anomaly_risk_score"] >= 80 else "MEDIUM",
+                "measured_value": f"Anomaly Risk Score: {r['anomaly_risk_score']}/100",
+                "anomaly_risk_score": r["anomaly_risk_score"]
+            })
+        # 4. Payment Concentration Alert
+        if r["max_single_tranche_ratio"] >= 0.95 and r["payment_tranche_count"] > 1:
+            alerts.append({
+                "work_id": r["work_id"],
+                "state": r["state"],
+                "district": r["district"],
+                "work_title": r["work_title"],
+                "alert_type": "Unusual Payment Pattern",
+                "severity": "MEDIUM",
+                "measured_value": f"Single payment ratio {round(r['max_single_tranche_ratio']*100, 1)}%",
+                "anomaly_risk_score": r["anomaly_risk_score"]
+            })
+
+    return {"total_alerts": len(alerts), "alerts": alerts[:limit]}
+
+
+@app.get("/api/analytics/monitoring")
+def get_analytics_monitoring(
+    h_db: sqlite3.Connection = Depends(get_historical_db)
+):
+    """Provides backend data for 10 dynamic charts in the Analytics section."""
+    h_cur = h_db.cursor()
+
+    # 1. State-wise project count
+    h_cur.execute("""
+        SELECT state, COUNT(*) as project_count, SUM(sanction_amount) as total_sanction, SUM(total_disbursed) as total_disbursed
+        FROM project_monitoring_features
+        GROUP BY state
+        ORDER BY project_count DESC
+    """)
+    state_metrics = [dict(r) for r in h_cur.fetchall()]
+
+    # 2. Completion status distribution
+    h_cur.execute("SELECT work_completion_status as status, COUNT(*) as count FROM project_monitoring_features GROUP BY work_completion_status")
+    completion_dist = [dict(r) for r in h_cur.fetchall()]
+
+    # 3. Delay status distribution
+    h_cur.execute("SELECT delay_status as status, COUNT(*) as count FROM project_monitoring_features GROUP BY delay_status")
+    delay_dist = [dict(r) for r in h_cur.fetchall()]
+
+    # 4. Budget monitoring distribution
+    h_cur.execute("SELECT budget_monitoring_status as status, COUNT(*) as count FROM project_monitoring_features GROUP BY budget_monitoring_status")
+    budget_dist = [dict(r) for r in h_cur.fetchall()]
+
+    # 5. Payment tranche distribution
+    h_cur.execute("""
+        SELECT 
+            CASE 
+                WHEN payment_tranche_count = 0 THEN '0 Tranches'
+                WHEN payment_tranche_count = 1 THEN '1 Tranche'
+                WHEN payment_tranche_count BETWEEN 2 AND 3 THEN '2-3 Tranches'
+                WHEN payment_tranche_count BETWEEN 4 AND 5 THEN '4-5 Tranches'
+                ELSE '6+ Tranches'
+            END as category,
+            COUNT(*) as count
+        FROM project_monitoring_features
+        GROUP BY category
+    """)
+    tranche_dist = [dict(r) for r in h_cur.fetchall()]
+
+    # 6. ML anomaly distribution
+    h_cur.execute("SELECT anomaly_status as status, COUNT(*) as count FROM project_monitoring_features GROUP BY anomaly_status")
+    anomaly_dist = [dict(r) for r in h_cur.fetchall()]
+
+    # 7. Monthly payment trend using expenditure_date
+    h_cur.execute("""
+        SELECT 
+            substr(expenditure_date, 1, 7) as month_str,
+            COUNT(*) as payment_count,
+            SUM(reported_fund_disbursed_amount) as total_disbursed
+        FROM historical_payment_events
+        WHERE expenditure_date IS NOT NULL AND TRIM(expenditure_date) != ''
+        GROUP BY month_str
+        ORDER BY month_str ASC
+    """)
+    monthly_payments = [dict(r) for r in h_cur.fetchall()]
+
+    return {
+        "state_metrics": state_metrics,
+        "completion_dist": completion_dist,
+        "delay_dist": delay_dist,
+        "budget_dist": budget_dist,
+        "tranche_dist": tranche_dist,
+        "anomaly_dist": anomaly_dist,
+        "monthly_payments": monthly_payments
+    }
+
+
+@app.post("/api/ml/retrain")
+def retrain_ml_model(
+    contamination: float = Query(0.05, ge=0.01, le=0.2),
+    h_db: sqlite3.Connection = Depends(get_historical_db)
+):
+    """Triggers ML Isolation Forest retraining with configurable contamination rate."""
+    try:
+        run_monitoring_pipeline(h_db, contamination=contamination)
+        return {
+            "success": True,
+            "message": f"ML Isolation Forest successfully retrained with contamination rate = {contamination}.",
+            "contamination": contamination
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"ML retraining failed: {str(e)}")
 
 
 # Mount static assets directory

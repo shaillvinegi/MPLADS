@@ -58,11 +58,18 @@ function renderStatusBadge(status) {
   return `<span class="badge-status bg-slate-100 text-slate-700">${status}</span>`;
 }
 
-// Navigation Handler across all 6 main tabs
+// Monitoring global state
+let monPage = 1;
+let monLimit = 20;
+
+// Chart instances store for 10 charts
+let chartInstances = {};
+
+// Navigation Handler across all main tabs
 function switchNav(viewName) {
   currentView = viewName;
 
-  const views = ["landing", "citizen", "mp", "da", "ia", "analytics"];
+  const views = ["landing", "citizen", "mp", "da", "ia", "monitoring", "alerts", "analytics"];
   views.forEach(v => {
     const el = document.getElementById(`view-${v}`);
     if (el) el.classList.add("hidden");
@@ -93,6 +100,10 @@ function switchNav(viewName) {
     loadDaDashboard(stateVal, distVal);
   } else if (viewName === "ia") {
     loadIaDashboard();
+  } else if (viewName === "monitoring") {
+    loadMonitoringDashboard();
+  } else if (viewName === "alerts") {
+    loadAlertsView();
   } else if (viewName === "analytics") {
     renderAnalyticsCharts();
   }
@@ -245,21 +256,56 @@ function onDaDistrictChange(selectedDistrict) {
   loadDaDashboard(selectedState, selectedDistrict);
 }
 
-function populatePublicDistricts(selectedState) {
+async function populatePublicDistricts(selectedState) {
   const distSelect = document.getElementById("filter-district");
-  if (!distSelect || !geoMetadata || !geoMetadata.districts) return;
+  if (!distSelect) return;
 
-  let districts = geoMetadata.districts;
-  if (selectedState && selectedState.trim() !== "" && !selectedState.toLowerCase().startsWith("all")) {
-    districts = districts.filter(d => d.state === selectedState);
+  try {
+    const url = (selectedState && selectedState.trim() !== "" && !selectedState.toLowerCase().startsWith("all"))
+      ? `/api/metadata/districts?state=${encodeURIComponent(selectedState)}`
+      : `/api/metadata/districts`;
+    const res = await fetch(url);
+    const data = await res.json();
+    const districts = data.districts || [];
+    distSelect.innerHTML = `<option value="">All Districts (${districts.length})</option>` +
+      districts.map(d => `<option value="${d}">${d}</option>`).join("");
+  } catch (err) {
+    console.error("Failed to load districts:", err);
   }
-
-  distSelect.innerHTML = `<option value="">All Districts (${districts.length})</option>` +
-    districts.map(d => `<option value="${d.district}">${d.district}</option>`).join("");
 }
 
-function onStateFilterChange(selectedState) {
-  populatePublicDistricts(selectedState);
+async function populatePublicConstituencies(selectedState, selectedDistrict) {
+  const constSelect = document.getElementById("filter-constituency");
+  if (!constSelect) return;
+
+  try {
+    const params = new URLSearchParams();
+    if (selectedState && selectedState.trim() !== "" && !selectedState.toLowerCase().startsWith("all")) {
+      params.append("state", selectedState);
+    }
+    if (selectedDistrict && selectedDistrict.trim() !== "" && !selectedDistrict.toLowerCase().startsWith("all")) {
+      params.append("district", selectedDistrict);
+    }
+    const res = await fetch(`/api/metadata/constituencies?${params.toString()}`);
+    const data = await res.json();
+    const constituencies = data.constituencies || [];
+    constSelect.innerHTML = `<option value="">All Constituencies (${constituencies.length})</option>` +
+      constituencies.map(c => `<option value="${c}">${c}</option>`).join("");
+  } catch (err) {
+    console.error("Failed to load constituencies:", err);
+  }
+}
+
+async function onStateFilterChange(selectedState) {
+  await populatePublicDistricts(selectedState);
+  await populatePublicConstituencies(selectedState, "");
+  applyWorksFilter();
+}
+
+async function onDistrictFilterChange(selectedDistrict) {
+  const stateSelect = document.getElementById("filter-state");
+  const selectedState = stateSelect ? stateSelect.value : "";
+  await populatePublicConstituencies(selectedState, selectedDistrict);
   applyWorksFilter();
 }
 
@@ -267,9 +313,11 @@ function resetPublicFilters() {
   if (document.getElementById("filter-q")) document.getElementById("filter-q").value = "";
   if (document.getElementById("filter-state")) document.getElementById("filter-state").value = "";
   if (document.getElementById("filter-district")) document.getElementById("filter-district").value = "";
+  if (document.getElementById("filter-constituency")) document.getElementById("filter-constituency").value = "";
   if (document.getElementById("filter-category")) document.getElementById("filter-category").value = "";
   if (document.getElementById("filter-status")) document.getElementById("filter-status").value = "";
   populatePublicDistricts("");
+  populatePublicConstituencies("", "");
   fetchWorks(1);
 }
 
@@ -367,11 +415,12 @@ async function fetchAnalyticsOverview() {
 async function fetchWorks(page = 1) {
   worksPage = page;
   const tbody = document.getElementById("works-table-body");
-  tbody.innerHTML = `<tr><td colspan="7" class="text-center py-8 text-slate-400">Loading verified works from database...</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="8" class="text-center py-8 text-slate-400">Loading verified works from database...</td></tr>`;
 
   const q = document.getElementById("filter-q") ? document.getElementById("filter-q").value : "";
   const state = document.getElementById("filter-state") ? document.getElementById("filter-state").value : "";
   const district = document.getElementById("filter-district") ? document.getElementById("filter-district").value : "";
+  const constituency = document.getElementById("filter-constituency") ? document.getElementById("filter-constituency").value : "";
   const category = document.getElementById("filter-category") ? document.getElementById("filter-category").value : "";
   const status = document.getElementById("filter-status") ? document.getElementById("filter-status").value : "";
 
@@ -383,12 +432,22 @@ async function fetchWorks(page = 1) {
   if (q) params.append("q", q);
   if (state) params.append("state", state);
   if (district) params.append("district", district);
+  if (constituency) params.append("constituency", constituency);
   if (category) params.append("category", category);
   if (status) params.append("status", status);
 
   try {
     const res = await fetch(`/api/works?${params.toString()}`);
     const data = await res.json();
+
+    // Update Summary Information Cards dynamically from active search query
+    if (data.summary) {
+      if (document.getElementById("pub-sum-works")) document.getElementById("pub-sum-works").textContent = (data.summary.total_works || 0).toLocaleString();
+      if (document.getElementById("pub-sum-sanction")) document.getElementById("pub-sum-sanction").textContent = formatINR(data.summary.total_sanction_amount || 0);
+      if (document.getElementById("pub-sum-disbursed")) document.getElementById("pub-sum-disbursed").textContent = formatINR(data.summary.total_disbursed_amount || 0);
+      if (document.getElementById("pub-sum-completed")) document.getElementById("pub-sum-completed").textContent = (data.summary.completed_works || 0).toLocaleString();
+      if (document.getElementById("pub-sum-ongoing")) document.getElementById("pub-sum-ongoing").textContent = (data.summary.ongoing_works || 0).toLocaleString();
+    }
 
     document.getElementById("works-count-label").textContent = data.total.toLocaleString();
     document.getElementById("current-page-num").textContent = data.page;
@@ -398,50 +457,55 @@ async function fetchWorks(page = 1) {
     document.getElementById("next-page-btn").disabled = data.page >= data.total_pages;
 
     if (!data.items || data.items.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="7" class="text-center py-8 text-slate-500 font-medium">No matching works found. Try adjusting or clearing search filters.</td></tr>`;
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="8" class="text-center py-12 text-slate-500">
+            <div class="max-w-md mx-auto space-y-2">
+              <div class="text-2xl">🔍</div>
+              <div class="font-bold text-slate-700">No historical works found for the selected filters.</div>
+              <p class="text-xs text-slate-500">Try changing or clearing your search term, state, district, or constituency selection.</p>
+              <button onclick="resetPublicFilters()" class="mt-2 text-xs font-bold text-gov-primary bg-blue-50 hover:bg-blue-100 border border-blue-200 px-4 py-2 rounded-lg transition">Clear All Filters</button>
+            </div>
+          </td>
+        </tr>
+      `;
       return;
     }
 
     tbody.innerHTML = data.items.map(w => {
-      const isLive = (w.source === "live");
-      const sourceBadge = isLive 
-        ? `<span class="bg-amber-100 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded border border-amber-200">LIVE APPLICATION RECORD</span>` 
-        : `<span class="bg-slate-100 text-slate-600 text-[10px] font-semibold px-2 py-0.5 rounded border border-slate-200">HISTORICAL DATASET RECORD</span>`;
+      const disbPct = (w.sanction_amount && w.sanction_amount > 0) 
+        ? ((w.total_disbursed / w.sanction_amount) * 100).toFixed(1) 
+        : null;
 
       return `
-        <tr>
-          <td>
-            <div class="font-mono text-xs font-bold text-slate-800">${w.work_id}</div>
-            <div class="flex items-center gap-1.5 mt-0.5">
-              ${sourceBadge}
-              <span class="text-[11px] text-slate-500">${w.work_category || 'General'}</span>
-            </div>
+        <tr class="hover:bg-slate-50 transition">
+          <td class="px-4 py-3 border-b border-slate-100">
+            <div class="font-mono text-xs font-bold text-slate-800">${w.work_id || 'N/A'}</div>
           </td>
-          <td>
-            <div class="font-semibold text-slate-800 text-xs line-clamp-1" title="${w.work_title}">${w.work_title}</div>
-            <div class="text-[11px] text-slate-500">${w.district}, ${w.state}</div>
+          <td class="px-4 py-3 border-b border-slate-100">
+            <div class="font-semibold text-slate-800 text-xs line-clamp-2" title="${w.work_title || ''}">${w.work_title || 'Not available in source data'}</div>
+            ${w.work_category ? `<div class="text-[11px] text-slate-500 mt-0.5">${w.work_category}</div>` : ''}
           </td>
-          <td>
-            <div class="text-xs font-semibold text-gov-primary">${w.mp_name || 'MP'}</div>
-            <div class="text-[11px] text-slate-500">${w.constituency}</div>
+          <td class="px-4 py-3 border-b border-slate-100">
+            <div class="font-semibold text-slate-800 text-xs">${w.district || 'N/A'}</div>
+            <div class="text-[11px] text-slate-500">${w.state || 'N/A'}</div>
           </td>
-          <td>
-            <div class="font-semibold text-xs text-slate-800">${formatINR(w.sanction_amount)}</div>
-            <div class="text-[11px] text-emerald-700 font-medium">Disbursed: ${formatINR(w.total_disbursed)}</div>
+          <td class="px-4 py-3 border-b border-slate-100">
+            <div class="font-semibold text-slate-800 text-xs">${w.constituency || 'N/A'}</div>
+            <div class="text-[11px] text-gov-primary font-medium">${w.mp_name || 'Not available in source data'}</div>
           </td>
-          <td>
-            <div class="flex items-center gap-2">
-              <div class="w-16 bg-slate-200 rounded-full h-1.5 overflow-hidden">
-                <div class="bg-gov-primary h-1.5 rounded-full" style="width: ${w.physical_progress_pct || 0}%"></div>
-              </div>
-              <span class="text-[11px] font-bold text-slate-700">${w.physical_progress_pct || 0}%</span>
-            </div>
+          <td class="px-4 py-3 border-b border-slate-100">
+            <div class="font-bold text-xs text-slate-800">${formatINR(w.sanction_amount)}</div>
           </td>
-          <td>
+          <td class="px-4 py-3 border-b border-slate-100">
+            <div class="font-bold text-xs text-emerald-700">${formatINR(w.total_disbursed)}</div>
+            ${disbPct !== null ? `<div class="text-[10px] text-slate-500 mt-0.5">${disbPct}% of sanction</div>` : ''}
+          </td>
+          <td class="px-4 py-3 border-b border-slate-100">
             ${renderStatusBadge(w.status)}
           </td>
-          <td>
-            <button onclick="viewWorkDetail('${w.work_id}')" class="text-xs font-bold text-gov-primary hover:text-blue-900 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-3 py-1 rounded-md transition shadow-2xs">
+          <td class="px-4 py-3 border-b border-slate-100">
+            <button onclick="viewWorkDetail('${w.work_id}')" class="text-xs font-bold text-gov-primary hover:text-blue-900 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-3 py-1.5 rounded-lg transition shadow-2xs">
               View Detail
             </button>
           </td>
@@ -451,7 +515,7 @@ async function fetchWorks(page = 1) {
 
   } catch (err) {
     console.error("Error fetching works:", err);
-    tbody.innerHTML = `<tr><td colspan="7" class="text-center py-8 text-red-500">Failed to load works from server: ${err.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="text-center py-8 text-red-500">Failed to load works from server: ${err.message}</td></tr>`;
   }
 }
 
@@ -489,15 +553,15 @@ async function viewWorkDetail(workId) {
     const data = await res.json();
     const w = data.work;
 
-    document.getElementById("dtl-title").textContent = w.title;
-    document.getElementById("dtl-wid").textContent = `ID: ${w.work_id}`;
+    document.getElementById("dtl-title").textContent = w.title || "Not available in source data";
+    document.getElementById("dtl-wid").textContent = `ID: ${w.work_id || 'N/A'}`;
     document.getElementById("dtl-badge").outerHTML = `<span id="dtl-badge">${renderStatusBadge(w.status)}</span>`;
     document.getElementById("dtl-source-tag").textContent = (w.source === 'live') ? 'LIVE APPLICATION RECORD' : 'HISTORICAL DATASET RECORD';
 
-    document.getElementById("dtl-geo").textContent = `${w.district}, ${w.state}`;
-    document.getElementById("dtl-constituency").textContent = w.constituency;
-    document.getElementById("dtl-mp").textContent = w.mp_name;
-    document.getElementById("dtl-category").textContent = w.work_category;
+    document.getElementById("dtl-geo").textContent = `${w.district || 'Not available'}, ${w.state || 'Not available'}`;
+    document.getElementById("dtl-constituency").textContent = w.constituency || "Not available in source data";
+    document.getElementById("dtl-mp").textContent = w.mp_name || "Not available in source data";
+    document.getElementById("dtl-category").textContent = w.work_category || "Not available in source data";
     document.getElementById("dtl-sanction-date").textContent = formatDate(w.sanction_date);
     document.getElementById("dtl-completion-date").textContent = formatDate(w.completion_date);
 
@@ -520,8 +584,8 @@ async function viewWorkDetail(workId) {
       ptbody.innerHTML = payments.map(p => `
         <tr>
           <td>${formatDate(p.expenditure_date)}</td>
-          <td class="font-medium text-slate-800">${p.vendor_name_normalized || p.vendor_name_raw}</td>
-          <td><span class="text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded">✓ ${p.payment_status}</span></td>
+          <td class="font-medium text-slate-800">${p.vendor_name_normalized || p.vendor_name_raw || 'Not available in source data'}</td>
+          <td><span class="text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded">✓ ${p.payment_status || 'SUCCESS'}</span></td>
           <td class="font-bold text-slate-800">${formatINR(p.reported_fund_disbursed_amount)}</td>
         </tr>
       `).join("");
@@ -532,6 +596,7 @@ async function viewWorkDetail(workId) {
     alert("Lookup message: " + err.message);
   }
 }
+
 
 
 // --- 4. MP PORTAL ---
@@ -902,94 +967,520 @@ async function submitProgressUpdate(e) {
 }
 
 
-// --- 7. DYNAMIC ANALYTICS & CHARTS ---
-function renderAnalyticsCharts() {
-  if (!analyticsData) return;
+// --- 7. PROJECT MONITORING & ML ANOMALY DETECTION HANDLERS ---
 
-  // 1. State-Wise Projects Bar Chart
-  const stateCtx = document.getElementById("chart-states");
-  if (stateCtx && analyticsData.state_breakdown) {
-    const states = analyticsData.state_breakdown;
-    const labels = states.map(s => s.state);
-    const counts = states.map(s => s.project_count);
-
-    if (stateChartInstance) stateChartInstance.destroy();
-    stateChartInstance = new Chart(stateCtx, {
-      type: "bar",
-      data: {
-        labels: labels,
-        datasets: [{
-          label: "Number of Projects",
-          data: counts,
-          backgroundColor: "#0F4C81",
-          borderRadius: 4
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { display: false }
-        },
-        scales: {
-          y: { beginAtZero: true, grid: { color: "#F1F5F9" } },
-          x: { grid: { display: false } }
-        }
-      }
-    });
+async function loadMonitoringDashboard() {
+  const stateSel = document.getElementById("mon-filter-state");
+  if (stateSel && geoMetadata && geoMetadata.states && stateSel.options.length <= 1) {
+    stateSel.innerHTML = `<option value="">All States (${geoMetadata.states.length})</option>` +
+      geoMetadata.states.map(s => `<option value="${s}">${s}</option>`).join("");
   }
 
-  // 2. Execution Status Doughnut Chart
-  const statusCtx = document.getElementById("chart-status");
-  if (statusCtx && analyticsData.status_breakdown) {
-    const statuses = analyticsData.status_breakdown;
-    const labels = statuses.map(s => s.status);
-    const counts = statuses.map(s => s.count);
+  const selectedState = stateSel ? stateSel.value : "";
+  const selectedDist = document.getElementById("mon-filter-district") ? document.getElementById("mon-filter-district").value : "";
 
-    if (statusChartInstance) statusChartInstance.destroy();
-    statusChartInstance = new Chart(statusCtx, {
-      type: "doughnut",
-      data: {
-        labels: labels,
-        datasets: [{
-          data: counts,
-          backgroundColor: ["#0A2540", "#0F4C81", "#2563EB", "#38BDF8", "#107C41", "#F58220", "#64748B"]
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { position: "right", labels: { boxWidth: 12, font: { size: 10 } } }
-        }
-      }
-    });
+  // Fetch Summary KPIs
+  try {
+    const sumRes = await fetch(`/api/monitoring/summary?state=${encodeURIComponent(selectedState)}&district=${encodeURIComponent(selectedDist)}`);
+    const summary = await sumRes.json();
+
+    const b = summary.budget_monitoring || {};
+    const d = summary.delay_monitoring || {};
+    const p = summary.payment_analysis || {};
+    const m = summary.ml_anomaly_detection || {};
+
+    if (document.getElementById("mon-kpi-budget-status")) document.getElementById("mon-kpi-budget-status").textContent = `${(b.total_projects || 0).toLocaleString()} Works`;
+    if (document.getElementById("mon-kpi-within-sanction")) document.getElementById("mon-kpi-within-sanction").textContent = (b.within_sanction || 0).toLocaleString();
+    if (document.getElementById("mon-kpi-fully-disbursed")) document.getElementById("mon-kpi-fully-disbursed").textContent = (b.fully_disbursed || 0).toLocaleString();
+    if (document.getElementById("mon-kpi-overruns")) document.getElementById("mon-kpi-overruns").textContent = (b.potential_budget_overruns || 0).toLocaleString();
+
+    if (document.getElementById("mon-kpi-delay-status")) document.getElementById("mon-kpi-delay-status").textContent = `${((d.on_time || 0) + (d.delayed || 0)).toLocaleString()} Completed`;
+    if (document.getElementById("mon-kpi-ontime")) document.getElementById("mon-kpi-ontime").textContent = (d.on_time || 0).toLocaleString();
+    if (document.getElementById("mon-kpi-delayed")) document.getElementById("mon-kpi-delayed").textContent = (d.delayed || 0).toLocaleString();
+    if (document.getElementById("mon-kpi-ongoing-delayed")) document.getElementById("mon-kpi-ongoing-delayed").textContent = (d.ongoing_delayed || 0).toLocaleString();
+
+    if (document.getElementById("mon-kpi-total-payments")) document.getElementById("mon-kpi-total-payments").textContent = `${(p.total_payment_events || 0).toLocaleString()} Events`;
+    if (document.getElementById("mon-kpi-avg-tranche")) document.getElementById("mon-kpi-avg-tranche").textContent = formatINR(p.avg_payment_tranche || 0);
+    if (document.getElementById("mon-kpi-multi-tranche")) document.getElementById("mon-kpi-multi-tranche").textContent = (p.multiple_tranche_projects || 0).toLocaleString();
+    if (document.getElementById("mon-kpi-vendor-conc")) document.getElementById("mon-kpi-vendor-conc").textContent = (p.vendor_concentration_projects || 0).toLocaleString();
+
+    if (document.getElementById("mon-kpi-ml-anomalies")) document.getElementById("mon-kpi-ml-anomalies").textContent = `${(m.potential_anomalies || 0).toLocaleString()} Anomalies`;
+    if (document.getElementById("mon-kpi-ml-analyzed")) document.getElementById("mon-kpi-ml-analyzed").textContent = (m.projects_analyzed || 0).toLocaleString();
+    if (document.getElementById("mon-kpi-ml-pct")) document.getElementById("mon-kpi-ml-pct").textContent = `${m.anomaly_pct || 0}%`;
+
+  } catch (err) {
+    console.error("Failed to load monitoring summary:", err);
   }
 
-  // 3. State Summary Table
-  const tbody = document.getElementById("analytics-states-tbody");
-  if (tbody && analyticsData.state_breakdown) {
-    tbody.innerHTML = analyticsData.state_breakdown.map(s => {
-      const completionRate = s.project_count > 0 ? ((s.completed_count / s.project_count) * 100).toFixed(1) : 0;
+  fetchMonitoringWorks(monPage);
+}
+
+async function onMonStateChange(stateVal) {
+  const distSel = document.getElementById("mon-filter-district");
+  if (!distSel) return;
+
+  if (!stateVal) {
+    distSel.innerHTML = `<option value="">All Districts</option>`;
+    applyMonitoringFilter();
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/metadata/districts?state=${encodeURIComponent(stateVal)}`);
+    const data = await res.json();
+    const dists = data.districts || [];
+    distSel.innerHTML = `<option value="">All Districts (${dists.length})</option>` +
+      dists.map(d => `<option value="${d}">${d}</option>`).join("");
+    applyMonitoringFilter();
+  } catch (err) {
+    console.error("Failed to load districts for monitoring:", err);
+  }
+}
+
+async function fetchMonitoringWorks(page = 1) {
+  monPage = page;
+  const q = document.getElementById("mon-filter-q") ? document.getElementById("mon-filter-q").value : "";
+  const state = document.getElementById("mon-filter-state") ? document.getElementById("mon-filter-state").value : "";
+  const district = document.getElementById("mon-filter-district") ? document.getElementById("mon-filter-district").value : "";
+  const delay = document.getElementById("mon-filter-delay") ? document.getElementById("mon-filter-delay").value : "";
+  const budget = document.getElementById("mon-filter-budget") ? document.getElementById("mon-filter-budget").value : "";
+  const anomaly = document.getElementById("mon-filter-anomaly") ? document.getElementById("mon-filter-anomaly").value : "";
+
+  const params = new URLSearchParams({ page: monPage, limit: monLimit });
+  if (q) params.append("q", q);
+  if (state) params.append("state", state);
+  if (district) params.append("district", district);
+  if (delay) params.append("delay_status", delay);
+  if (budget) params.append("budget_status", budget);
+  if (anomaly) params.append("anomaly_status", anomaly);
+
+  try {
+    const res = await fetch(`/api/monitoring/works?${params.toString()}`);
+    const data = await res.json();
+
+    if (document.getElementById("mon-results-count")) document.getElementById("mon-results-count").textContent = (data.total || 0).toLocaleString();
+    if (document.getElementById("mon-page-num")) document.getElementById("mon-page-num").textContent = data.page || 1;
+    if (document.getElementById("mon-total-pages")) document.getElementById("mon-total-pages").textContent = data.total_pages || 1;
+
+    const prevBtn = document.getElementById("mon-prev-btn");
+    const nextBtn = document.getElementById("mon-next-btn");
+    if (prevBtn) prevBtn.disabled = (data.page <= 1);
+    if (nextBtn) nextBtn.disabled = (data.page >= data.total_pages);
+
+    const tbody = document.getElementById("mon-table-body");
+    if (!tbody) return;
+
+    if (!data.items || data.items.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="8" class="text-center py-8 text-slate-400">No monitoring records found matching criteria.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = data.items.map(item => {
+      const riskScore = item.anomaly_risk_score || 0;
+      let scoreBadge = `<span class="badge-status badge-anomaly-normal">${riskScore}/100 Normal</span>`;
+      if (item.anomaly_status === "POTENTIAL ANOMALY") {
+        if (riskScore >= 80) {
+          scoreBadge = `<span class="badge-status badge-anomaly-high">⚠️ ${riskScore}/100 HIGH RISK</span>`;
+        } else {
+          scoreBadge = `<span class="badge-status badge-anomaly-medium">⚠️ ${riskScore}/100 MODERATE RISK</span>`;
+        }
+      }
+
+      let delayBadge = `<span class="badge-status badge-delay-ontime">✓ ON_TIME</span>`;
+      if (item.delay_status === "DELAYED") {
+        delayBadge = `<span class="badge-status badge-delay-delayed">⏱ DELAYED</span>`;
+      } else if (item.delay_status === "ONGOING_DELAYED") {
+        delayBadge = `<span class="badge-status badge-delay-delayed">⏱ ONGOING OVER TARGET</span>`;
+      } else if (item.delay_status === "ONGOING_WITHIN_TARGET") {
+        delayBadge = `<span class="badge-status badge-delay-ongoing">⚙ ONGOING</span>`;
+      }
+
+      const disbRatioStr = item.budget_disbursement_ratio !== undefined ? `${(item.budget_disbursement_ratio * 100).toFixed(1)}%` : "N/A";
+
       return `
         <tr>
-          <td class="font-bold text-slate-800">${s.state}</td>
-          <td>${s.project_count.toLocaleString()}</td>
-          <td class="font-semibold text-slate-800">${formatINR(s.total_sanction)}</td>
-          <td class="font-semibold text-emerald-700">${formatINR(s.total_disbursed)}</td>
-          <td>${s.completed_count.toLocaleString()}</td>
           <td>
-            <div class="flex items-center gap-2">
-              <span class="font-bold text-xs">${completionRate}%</span>
-              <div class="w-12 bg-slate-200 rounded-full h-1.5 overflow-hidden">
-                <div class="bg-emerald-600 h-1.5 rounded-full" style="width: ${completionRate}%"></div>
-              </div>
-            </div>
+            <div class="font-bold text-slate-800 font-mono text-xs">${item.work_id}</div>
+            <div class="text-[11px] text-slate-500">${item.work_category || 'General'}</div>
+          </td>
+          <td>
+            <div class="font-semibold text-slate-800 text-xs line-clamp-1" title="${item.work_title}">${item.work_title}</div>
+            <div class="text-[11px] text-slate-500">${item.district}, ${item.state} • ${item.mp_name || ''}</div>
+          </td>
+          <td>
+            <div class="font-bold text-slate-800">${formatINR(item.sanction_amount)}</div>
+            <div class="text-[11px] font-semibold text-emerald-700">${formatINR(item.total_disbursed)}</div>
+          </td>
+          <td>
+            <span class="font-bold text-xs ${item.budget_disbursement_ratio > 1.0 ? 'text-red-700' : 'text-slate-700'}">${disbRatioStr}</span>
+          </td>
+          <td>${delayBadge}</td>
+          <td>
+            <div class="font-bold text-xs">${item.payment_tranche_count} tranches</div>
+            <div class="text-[11px] text-slate-500">${item.vendor_unique_count} vendors</div>
+          </td>
+          <td>${scoreBadge}</td>
+          <td>
+            <button onclick="inspectWorkDetail('${item.work_id}')" class="bg-purple-100 hover:bg-purple-200 text-purple-900 font-bold px-3 py-1.5 rounded-lg text-xs transition border border-purple-200">
+              🔍 Inspect ML
+            </button>
           </td>
         </tr>
       `;
     }).join("");
+
+  } catch (err) {
+    console.error("Failed to fetch monitoring works:", err);
   }
+}
+
+function applyMonitoringFilter() {
+  fetchMonitoringWorks(1);
+}
+
+function resetMonitoringFilters() {
+  if (document.getElementById("mon-filter-q")) document.getElementById("mon-filter-q").value = "";
+  if (document.getElementById("mon-filter-state")) document.getElementById("mon-filter-state").value = "";
+  if (document.getElementById("mon-filter-district")) document.getElementById("mon-filter-district").value = "";
+  if (document.getElementById("mon-filter-delay")) document.getElementById("mon-filter-delay").value = "";
+  if (document.getElementById("mon-filter-budget")) document.getElementById("mon-filter-budget").value = "";
+  if (document.getElementById("mon-filter-anomaly")) document.getElementById("mon-filter-anomaly").value = "";
+  fetchMonitoringWorks(1);
+}
+
+function changeMonPage(delta) {
+  fetchMonitoringWorks(monPage + delta);
+}
+
+async function inspectWorkDetail(work_id) {
+  try {
+    const res = await fetch(`/api/monitoring/work/${encodeURIComponent(work_id)}`);
+    if (!res.ok) {
+      alert("Failed to fetch work detail.");
+      return;
+    }
+    const d = await res.json();
+
+    const p = d.project_info || {};
+    const f = d.financial_info || {};
+    const t = d.timeline || {};
+    const pay = d.payment_info || {};
+    const ml = d.ml_monitoring || {};
+
+    if (document.getElementById("ins-anomaly-badge")) {
+      document.getElementById("ins-anomaly-badge").className = `badge-status ${ml.anomaly_status === 'POTENTIAL ANOMALY' ? 'badge-anomaly-high' : 'badge-anomaly-normal'}`;
+      document.getElementById("ins-anomaly-badge").textContent = ml.anomaly_status || "NORMAL";
+    }
+
+    if (document.getElementById("ins-delay-badge")) {
+      document.getElementById("ins-delay-badge").className = `badge-status ${t.delay_status === 'DELAYED' ? 'badge-delay-delayed' : 'badge-delay-ontime'}`;
+      document.getElementById("ins-delay-badge").textContent = t.delay_status || "ON_TIME";
+    }
+
+    if (document.getElementById("ins-budget-badge")) {
+      document.getElementById("ins-budget-badge").className = `badge-status ${f.budget_monitoring_status === 'POTENTIAL_BUDGET_OVERRUN' ? 'badge-returned' : 'badge-completed'}`;
+      document.getElementById("ins-budget-badge").textContent = f.budget_monitoring_status || "WITHIN_SANCTION";
+    }
+
+    if (document.getElementById("ins-title")) document.getElementById("ins-title").textContent = p.work_title || "Project Detail";
+    if (document.getElementById("ins-wid")) document.getElementById("ins-wid").textContent = `WORK ID: ${p.work_id}`;
+    if (document.getElementById("ins-geo")) document.getElementById("ins-geo").textContent = `${p.district || ''}, ${p.state || ''}`;
+    if (document.getElementById("ins-constituency")) document.getElementById("ins-constituency").textContent = p.constituency || "N/A";
+    if (document.getElementById("ins-mp")) document.getElementById("ins-mp").textContent = p.mp_name || "N/A";
+    if (document.getElementById("ins-category")) document.getElementById("ins-category").textContent = p.work_category || "General";
+
+    if (document.getElementById("ins-ml-risk-score")) document.getElementById("ins-ml-risk-score").textContent = `${ml.anomaly_risk_score || 0}/100`;
+    if (document.getElementById("ins-ml-raw")) document.getElementById("ins-ml-raw").textContent = ml.raw_anomaly_score || "0.0000";
+    if (document.getElementById("ins-ml-pred")) document.getElementById("ins-ml-pred").textContent = `${ml.anomaly_prediction || 1} (${ml.anomaly_prediction === -1 ? 'Anomaly' : 'Normal'})`;
+    if (document.getElementById("ins-ml-status")) document.getElementById("ins-ml-status").textContent = ml.anomaly_status || "NORMAL";
+
+    const featObj = ml.features_contributing || {};
+    const featList = document.getElementById("ins-ml-features-list");
+    if (featList) {
+      featList.innerHTML = `
+        <div>• Sanction Outlay: <strong class="text-slate-800">${formatINR(featObj.sanction_amount)}</strong></div>
+        <div>• Disbursed Outlay: <strong class="text-slate-800">${formatINR(featObj.total_disbursed)}</strong></div>
+        <div>• Disbursement Ratio: <strong class="text-slate-800">${((featObj.disbursement_ratio || 0)*100).toFixed(1)}%</strong></div>
+        <div>• Sanction Lead Time: <strong class="text-slate-800">${featObj.sanction_lead_time_days || 0} days</strong></div>
+        <div>• Payment Tranches: <strong class="text-slate-800">${featObj.payment_tranches || 0} count</strong></div>
+        <div>• Max Tranche Ratio: <strong class="text-slate-800">${((featObj.max_tranche_ratio || 0)*100).toFixed(1)}%</strong></div>
+        <div>• Description Length: <strong class="text-slate-800">${featObj.description_length || 0} chars</strong></div>
+      `;
+    }
+
+    if (document.getElementById("ins-sanction-amt")) document.getElementById("ins-sanction-amt").textContent = formatINR(f.sanction_amount);
+    if (document.getElementById("ins-disbursed-amt")) document.getElementById("ins-disbursed-amt").textContent = formatINR(f.total_disbursed);
+    if (document.getElementById("ins-disb-ratio")) document.getElementById("ins-disb-ratio").textContent = f.disbursement_ratio !== undefined ? `${(f.disbursement_ratio * 100).toFixed(1)}%` : "0%";
+    if (document.getElementById("ins-variance-amt")) document.getElementById("ins-variance-amt").textContent = formatINR(f.remaining_sanction);
+    if (document.getElementById("ins-budget-status-val")) document.getElementById("ins-budget-status-val").textContent = f.budget_monitoring_status || "WITHIN_SANCTION";
+
+    if (document.getElementById("ins-rec-date")) document.getElementById("ins-rec-date").textContent = formatDate(t.recommended_date);
+    if (document.getElementById("ins-sanc-date")) document.getElementById("ins-sanc-date").textContent = formatDate(t.sanction_date);
+    if (document.getElementById("ins-exp-date")) document.getElementById("ins-exp-date").textContent = formatDate(t.expected_completion_date_proxy);
+    if (document.getElementById("ins-comp-date")) document.getElementById("ins-comp-date").textContent = formatDate(t.completion_date);
+    if (document.getElementById("ins-lead-time")) document.getElementById("ins-lead-time").textContent = `${t.sanction_lead_time_days || 0} days`;
+    if (document.getElementById("ins-schedule-delay")) document.getElementById("ins-schedule-delay").textContent = `${t.schedule_delay_days || 0} days`;
+
+    if (document.getElementById("ins-pay-count")) document.getElementById("ins-pay-count").textContent = `${pay.payment_tranche_count || 0} payment tranches`;
+    if (document.getElementById("ins-pay-first")) document.getElementById("ins-pay-first").textContent = formatDate(pay.first_payment_date);
+    if (document.getElementById("ins-pay-last")) document.getElementById("ins-pay-last").textContent = formatDate(pay.latest_payment_date);
+    if (document.getElementById("ins-pay-max-ratio")) document.getElementById("ins-pay-max-ratio").textContent = pay.max_single_tranche_ratio !== undefined ? `${(pay.max_single_tranche_ratio * 100).toFixed(1)}%` : "0%";
+    if (document.getElementById("ins-pay-vendors")) document.getElementById("ins-pay-vendors").textContent = pay.vendor_unique_count || 0;
+
+    const payTbody = document.getElementById("ins-payments-tbody");
+    if (payTbody) {
+      const plist = pay.payments_list || [];
+      if (plist.length === 0) {
+        payTbody.innerHTML = `<tr><td colspan="4" class="text-center py-4 text-slate-400">No payment events recorded for this project.</td></tr>`;
+      } else {
+        payTbody.innerHTML = plist.map(pitem => `
+          <tr>
+            <td class="font-mono text-xs">${formatDate(pitem.expenditure_date)}</td>
+            <td class="font-semibold text-slate-800 text-xs">${pitem.vendor_name_normalized || pitem.vendor_name_raw || 'Vendor'}</td>
+            <td><span class="badge-status badge-completed">${pitem.payment_status || 'SUCCESS'}</span></td>
+            <td class="font-bold text-emerald-700 text-xs">${formatINR(pitem.reported_fund_disbursed_amount)}</td>
+          </tr>
+        `).join("");
+      }
+    }
+
+    openModal("modal-inspect");
+  } catch (err) {
+    console.error("Error inspecting work:", err);
+    alert("Error fetching work inspection profile.");
+  }
+}
+
+async function loadAlertsView() {
+  const container = document.getElementById("alerts-container");
+  if (!container) return;
+
+  container.innerHTML = `<div class="p-6 text-center text-slate-400">Loading screening alerts...</div>`;
+
+  try {
+    const res = await fetch("/api/monitoring/alerts?limit=50");
+    const data = await res.json();
+
+    const alerts = data.alerts || [];
+    if (document.getElementById("alerts-count-badge")) document.getElementById("alerts-count-badge").textContent = alerts.length;
+
+    if (alerts.length === 0) {
+      container.innerHTML = `<div class="p-8 text-center text-slate-500 font-medium">Zero screening alerts triggered across active dataset.</div>`;
+      return;
+    }
+
+    container.innerHTML = alerts.map(a => {
+      let sevColor = "border-amber-200 bg-amber-50 text-amber-900";
+      if (a.severity === "HIGH") sevColor = "border-red-200 bg-red-50 text-red-900";
+
+      return `
+        <div class="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50 transition">
+          <div class="space-y-1">
+            <div class="flex items-center gap-2">
+              <span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${sevColor}">${a.alert_type}</span>
+              <span class="text-xs font-mono font-bold text-slate-600">${a.work_id}</span>
+              <span class="text-xs text-slate-500">• ${a.district}, ${a.state}</span>
+            </div>
+            <div class="font-bold text-slate-800 text-sm">${a.work_title}</div>
+            <div class="text-xs text-slate-600">Measurement: <strong class="text-slate-800">${a.measured_value}</strong></div>
+          </div>
+          <div class="flex items-center gap-3">
+            <div class="text-right hidden sm:block">
+              <div class="text-[10px] text-slate-500 uppercase font-semibold">Anomaly Risk</div>
+              <div class="text-base font-black ${a.anomaly_risk_score >= 80 ? 'text-red-700' : 'text-amber-700'}">${a.anomaly_risk_score}/100</div>
+            </div>
+            <button onclick="inspectWorkDetail('${a.work_id}')" class="bg-gov-primary hover:bg-blue-900 text-white font-bold px-3.5 py-2 rounded-xl text-xs transition shadow-xs">
+              Inspect ML Profile
+            </button>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+  } catch (err) {
+    console.error("Failed to load alerts:", err);
+  }
+}
+
+async function triggerRetrainMl() {
+  if (!confirm("Are you sure you want to retrain the Isolation Forest model on all 41,086 projects with contamination = 0.05?")) return;
+
+  try {
+    const res = await fetch("/api/ml/retrain?contamination=0.05", { method: "POST" });
+    const data = await res.json();
+
+    if (res.ok && data.success) {
+      alert("✅ Isolation Forest model retrained successfully!\n" + data.message);
+      loadMonitoringDashboard();
+    } else {
+      alert("Retraining failed: " + (data.detail || "Unknown error"));
+    }
+  } catch (err) {
+    console.error("Retrain error:", err);
+    alert("Retrain API call failed.");
+  }
+}
+
+async function renderAnalyticsCharts() {
+  try {
+    const res = await fetch("/api/analytics/monitoring");
+    const data = await res.json();
+
+    // 1. State-Wise Projects Bar Chart
+    if (document.getElementById("chart-states") && data.state_metrics) {
+      const topStates = data.state_metrics.slice(0, 15);
+      renderChart("chart-states", "bar", {
+        labels: topStates.map(s => s.state),
+        datasets: [{
+          label: "Sanctioned Projects",
+          data: topStates.map(s => s.project_count),
+          backgroundColor: "#0F4C81",
+          borderRadius: 4
+        }]
+      });
+    }
+
+    // 2. Work Completion Status (Doughnut)
+    if (document.getElementById("chart-status") && data.completion_dist) {
+      renderChart("chart-status", "doughnut", {
+        labels: data.completion_dist.map(c => c.status),
+        datasets: [{
+          data: data.completion_dist.map(c => c.count),
+          backgroundColor: ["#107C41", "#F58220", "#0F4C81", "#64748B"]
+        }]
+      });
+    }
+
+    // 3. Schedule Delay Classification (Bar)
+    if (document.getElementById("chart-delay") && data.delay_dist) {
+      renderChart("chart-delay", "bar", {
+        labels: data.delay_dist.map(d => d.status),
+        datasets: [{
+          label: "Projects",
+          data: data.delay_dist.map(d => d.count),
+          backgroundColor: ["#107C41", "#DC2626", "#2563EB", "#D97706"],
+          borderRadius: 4
+        }]
+      });
+    }
+
+    // 4. Budget Monitoring Classification (Doughnut)
+    if (document.getElementById("chart-budget") && data.budget_dist) {
+      renderChart("chart-budget", "doughnut", {
+        labels: data.budget_dist.map(b => b.status),
+        datasets: [{
+          data: data.budget_dist.map(b => b.count),
+          backgroundColor: ["#107C41", "#2563EB", "#DC2626"]
+        }]
+      });
+    }
+
+    // 5. Payment Tranche Frequency (Bar)
+    if (document.getElementById("chart-tranches") && data.tranche_dist) {
+      renderChart("chart-tranches", "bar", {
+        labels: data.tranche_dist.map(t => t.category),
+        datasets: [{
+          label: "Projects",
+          data: data.tranche_dist.map(t => t.count),
+          backgroundColor: "#7C3AED",
+          borderRadius: 4
+        }]
+      });
+    }
+
+    // 6. ML Anomaly Screening Distribution (Doughnut)
+    if (document.getElementById("chart-anomalies") && data.anomaly_dist) {
+      renderChart("chart-anomalies", "doughnut", {
+        labels: data.anomaly_dist.map(a => a.status),
+        datasets: [{
+          data: data.anomaly_dist.map(a => a.count),
+          backgroundColor: ["#334155", "#9333EA"]
+        }]
+      });
+    }
+
+    // 7. Monthly Expenditure Trend (Line)
+    if (document.getElementById("chart-monthly-payments") && data.monthly_payments) {
+      const topMonths = data.monthly_payments.slice(-24);
+      renderChart("chart-monthly-payments", "line", {
+        labels: topMonths.map(m => m.month_str),
+        datasets: [{
+          label: "Disbursed Amount (₹)",
+          data: topMonths.map(m => m.total_disbursed),
+          borderColor: "#107C41",
+          backgroundColor: "rgba(16, 124, 65, 0.1)",
+          fill: true,
+          tension: 0.3
+        }]
+      });
+    }
+
+    // 8. Top Disbursed Outlay by State (Bar)
+    if (document.getElementById("chart-risk-by-state") && data.state_metrics) {
+      const sortedByDisbursed = [...data.state_metrics].sort((a,b) => b.total_disbursed - a.total_disbursed).slice(0, 10);
+      renderChart("chart-risk-by-state", "bar", {
+        labels: sortedByDisbursed.map(s => s.state),
+        datasets: [{
+          label: "Total Disbursed (₹ Cr)",
+          data: sortedByDisbursed.map(s => (s.total_disbursed / 10000000).toFixed(2)),
+          backgroundColor: "#059669",
+          borderRadius: 4
+        }]
+      });
+    }
+
+    // Render State Summary Table
+    const tbody = document.getElementById("analytics-states-tbody");
+    if (tbody && data.state_metrics) {
+      tbody.innerHTML = data.state_metrics.map(s => {
+        const rate = s.project_count > 0 ? ((s.total_disbursed / (s.total_sanction || 1)) * 100).toFixed(1) : 0;
+        return `
+          <tr>
+            <td class="font-bold text-slate-800">${s.state}</td>
+            <td>${s.project_count.toLocaleString()}</td>
+            <td class="font-semibold text-slate-800">${formatINR(s.total_sanction)}</td>
+            <td class="font-semibold text-emerald-700">${formatINR(s.total_disbursed)}</td>
+            <td>
+              <div class="flex items-center gap-2">
+                <span class="font-bold text-xs">${rate}%</span>
+                <div class="w-16 bg-slate-200 rounded-full h-1.5 overflow-hidden">
+                  <div class="bg-gov-primary h-1.5 rounded-full" style="width: ${Math.min(rate, 100)}%"></div>
+                </div>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+  } catch (err) {
+    console.error("Failed to load analytics monitoring data:", err);
+  }
+}
+
+function renderChart(canvasId, type, chartData) {
+  const ctx = document.getElementById(canvasId);
+  if (!ctx) return;
+
+  if (chartInstances[canvasId]) {
+    chartInstances[canvasId].destroy();
+  }
+
+  chartInstances[canvasId] = new Chart(ctx, {
+    type: type,
+    data: chartData,
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: type === "doughnut", position: "right", labels: { boxWidth: 12, font: { size: 10 } } }
+      },
+      scales: type !== "doughnut" ? {
+        y: { beginAtZero: true, grid: { color: "#F1F5F9" } },
+        x: { grid: { display: false } }
+      } : {}
+    }
+  });
 }
 
 // Initial Boot
