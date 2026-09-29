@@ -1,0 +1,1054 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MPLADS Monitoring & Transparency Platform</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            gov: {
+              dark: '#0A2540',
+              primary: '#0F4C81',
+              accent: '#F58220',
+              green: '#107C41',
+              light: '#F8FAFC'
+            }
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="min-h-screen flex flex-col bg-slate-50 text-slate-800">
+
+  <!-- Top Tricolor Accent Bar -->
+  <div class="gov-tricolor-bar w-full"></div>
+
+  <!-- Main Header -->
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-xs">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <!-- Top Branding & Role Switcher Row -->
+      <div class="flex items-center justify-between py-4 border-b border-slate-100">
+        <!-- Logo & Title -->
+        <div class="flex items-center gap-3.5 cursor-pointer" onclick="switchNav('landing')">
+          <div class="flex items-center justify-center w-12 h-12 rounded-xl bg-gov-dark text-white font-bold text-2xl shadow-md border border-slate-700">
+            🏛️
+          </div>
+          <div>
+            <div class="text-[11px] font-bold tracking-wider text-gov-primary uppercase">
+              National Project Governance & Data Portal
+            </div>
+            <h1 class="text-xl sm:text-2xl font-black text-gov-dark tracking-tight leading-none mt-0.5">
+              MPLADS <span class="text-gov-primary font-bold">Monitoring & Transparency Platform</span>
+            </h1>
+            <p class="text-xs text-slate-500 font-medium mt-0.5">
+              Integrated Project Life-Cycle & Citizen Transparency Portal
+            </p>
+          </div>
+        </div>
+
+        <!-- Role Selector / Switcher -->
+        <div class="flex items-center gap-3">
+          <div class="text-right hidden sm:block">
+            <div class="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Active Stakeholder View</div>
+            <div id="current-user-label" class="text-xs font-bold text-gov-primary">Citizen / Public — Demo User</div>
+          </div>
+
+          <div class="relative">
+            <select id="role-switcher" onchange="handleRoleChange(this.value)" class="text-xs font-semibold bg-slate-100 text-slate-800 border border-slate-300 rounded-lg px-3 py-2 pr-8 focus:ring-2 focus:ring-gov-primary focus:outline-hidden cursor-pointer hover:bg-slate-200 transition">
+              <option value="citizen">👤 Citizen / Public — Demo User</option>
+              <option value="mp">🏛️ MP Portal — Demo User</option>
+              <option value="district_authority">⚖️ District Authority — Demo User</option>
+              <option value="implementing_agency">🛠️ Implementing Agency — Demo User</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Prominent Top Navigation Bar -->
+      <nav class="flex items-center space-x-1 sm:space-x-2 py-2 overflow-x-auto text-xs font-semibold">
+        <button id="nav-landing" onclick="switchNav('landing')" class="px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap text-slate-600 hover:text-gov-primary hover:bg-slate-100">
+          <span>🏠</span> HOME OVERVIEW
+        </button>
+        <button id="nav-citizen" onclick="switchNav('citizen')" class="px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap text-slate-600 hover:text-gov-primary hover:bg-slate-100">
+          <span>🔍</span> PUBLIC WORKS EXPLORER
+        </button>
+        <button id="nav-mp" onclick="switchNav('mp')" class="px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap text-slate-600 hover:text-gov-primary hover:bg-slate-100">
+          <span>🏛️</span> MP PORTAL
+        </button>
+        <button id="nav-da" onclick="switchNav('da')" class="px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap text-slate-600 hover:text-gov-primary hover:bg-slate-100">
+          <span>⚖️</span> DISTRICT AUTHORITY
+        </button>
+        <button id="nav-ia" onclick="switchNav('ia')" class="px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap text-slate-600 hover:text-gov-primary hover:bg-slate-100">
+          <span>🛠️</span> IMPLEMENTING AGENCY
+        </button>
+        <button id="nav-analytics" onclick="switchNav('analytics')" class="px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap text-slate-600 hover:text-gov-primary hover:bg-slate-100">
+          <span>📊</span> DATA ANALYTICS & CHARTS
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Global Banner Alert / Workflow Tracker -->
+  <div class="bg-blue-950 text-slate-100 py-2.5 px-4 shadow-inner">
+    <div class="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-2 text-xs">
+      <div class="flex items-center gap-2">
+        <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+        <span class="font-bold text-emerald-300">Data Sources Connected:</span> 
+        <span id="banner-dataset-info" class="text-slate-200">Loading dataset statistics...</span>
+      </div>
+      <div class="flex items-center gap-2 text-[11px] font-medium text-slate-300">
+        <span class="uppercase tracking-wider text-slate-400">Governance Cycle:</span>
+        <span class="px-2 py-0.5 rounded bg-white/10 text-white font-semibold">1. MP Recommends</span> →
+        <span class="px-2 py-0.5 rounded bg-white/10 text-white font-semibold">2. DA Scrutinizes & Sanctions</span> →
+        <span class="px-2 py-0.5 rounded bg-white/10 text-white font-semibold">3. Agency Executes & Updates</span> →
+        <span class="px-2 py-0.5 rounded bg-white/10 text-white font-semibold">4. Public Audit</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN CONTAINER -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
+
+    <!-- 1. LANDING VIEW -->
+    <section id="view-landing" class="space-y-8">
+      <!-- Hero Section -->
+      <div class="bg-gradient-to-r from-gov-dark via-slate-900 to-gov-primary text-white rounded-2xl p-8 sm:p-12 shadow-lg relative overflow-hidden">
+        <div class="relative z-10 max-w-3xl space-y-4">
+          <div class="inline-flex items-center gap-2 bg-white/10 text-white/90 px-3.5 py-1 rounded-full text-xs font-semibold backdrop-blur-xs border border-white/20">
+            <span>✨ Digital Project Governance & Financial Accountability</span>
+          </div>
+          <h1 class="text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight leading-tight">
+            Transparent, Accountable & Real-Time MPLADS Project Governance
+          </h1>
+          <p class="text-slate-200 text-sm sm:text-base leading-relaxed">
+            The platform provides end-to-end digital tracking for Members of Parliament Local Area Development Scheme (MPLADS) works — connecting MP recommendations, District Authority scrutiny & administrative sanction, Implementing Agency progress reporting, and open citizen audit access.
+          </p>
+          <div class="flex flex-wrap gap-3 pt-3">
+            <button onclick="switchNav('citizen')" class="bg-gov-accent hover:bg-orange-600 text-white font-bold px-6 py-3 rounded-xl text-sm transition shadow-md flex items-center gap-2">
+              <span>Explore Public Works Explorer</span> →
+            </button>
+            <button onclick="openCurrentPortal()" class="bg-white/10 hover:bg-white/20 text-white font-semibold px-5 py-3 rounded-xl text-sm transition backdrop-blur-xs border border-white/20">
+              Enter Stakeholder Portal
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Real Dataset Metric Cards (Dynamically computed from backend) -->
+      <div>
+        <h2 class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Key National Dataset Statistics</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5" id="landing-kpis">
+          <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-xs hover:border-gov-primary transition">
+            <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Total Audited Works</div>
+            <div class="text-3xl font-black text-gov-dark mt-1" id="kpi-total-works">--</div>
+            <div class="text-xs text-emerald-700 font-semibold mt-1" id="kpi-states-sub">--</div>
+          </div>
+          <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-xs hover:border-gov-primary transition">
+            <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Total Sanctioned Value</div>
+            <div class="text-3xl font-black text-gov-dark mt-1" id="kpi-total-sanction">--</div>
+            <div class="text-xs text-slate-500 font-medium mt-1" id="kpi-mean-outlay-sub">--</div>
+          </div>
+          <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-xs hover:border-gov-primary transition">
+            <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Disbursed Outlay</div>
+            <div class="text-3xl font-black text-emerald-700 mt-1" id="kpi-total-disbursed">--</div>
+            <div class="text-xs text-blue-700 font-semibold mt-1" id="kpi-events-sub">--</div>
+          </div>
+          <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-xs hover:border-gov-primary transition">
+            <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Work Completion Rate</div>
+            <div class="text-3xl font-black text-gov-primary mt-1" id="kpi-completion-rate">--</div>
+            <div class="text-xs text-slate-500 font-medium mt-1" id="kpi-completion-sub">--</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Explore Portal Action Cards -->
+      <div>
+        <h2 class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Explore Platform Portals</h2>
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-5">
+          <!-- 1. Public Explorer Card -->
+          <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between hover:shadow-md hover:border-gov-primary transition group">
+            <div class="space-y-3">
+              <div class="w-10 h-10 rounded-xl bg-blue-50 text-gov-primary flex items-center justify-center font-bold text-lg border border-blue-100">
+                🔍
+              </div>
+              <h3 class="font-bold text-slate-800 text-base group-hover:text-gov-primary transition">Public Works Explorer</h3>
+              <p class="text-xs text-slate-600 leading-relaxed">Search and audit all sanctioned works, contractor payment events, and execution progress across Indian states and districts.</p>
+            </div>
+            <button onclick="switchNav('citizen')" class="mt-5 text-xs font-bold text-gov-primary hover:text-blue-800 flex items-center gap-1 text-left">
+              <span>Open Public Explorer</span> →
+            </button>
+          </div>
+
+          <!-- 2. MP Portal Card -->
+          <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between hover:shadow-md hover:border-gov-primary transition group">
+            <div class="space-y-3">
+              <div class="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center font-bold text-lg border border-emerald-100">
+                🏛️
+              </div>
+              <h3 class="font-bold text-slate-800 text-base group-hover:text-gov-primary transition">MP Portal</h3>
+              <p class="text-xs text-slate-600 leading-relaxed">Members of Parliament can submit new development work recommendations, monitor constituency outlays, and track approval status.</p>
+            </div>
+            <button onclick="setRoleAndOpen('mp')" class="mt-5 text-xs font-bold text-gov-primary hover:text-blue-800 flex items-center gap-1 text-left">
+              <span>Launch MP Portal</span> →
+            </button>
+          </div>
+
+          <!-- 3. DA Portal Card -->
+          <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between hover:shadow-md hover:border-gov-primary transition group">
+            <div class="space-y-3">
+              <div class="w-10 h-10 rounded-xl bg-amber-50 text-amber-800 flex items-center justify-center font-bold text-lg border border-amber-100">
+                ⚖️
+              </div>
+              <h3 class="font-bold text-slate-800 text-base group-hover:text-gov-primary transition">District Authority Portal</h3>
+              <p class="text-xs text-slate-600 leading-relaxed">District Authorities review recommendations, issue administrative sanctions, assign implementing agencies, and oversee disbursements.</p>
+            </div>
+            <button onclick="setRoleAndOpen('district_authority')" class="mt-5 text-xs font-bold text-gov-primary hover:text-blue-800 flex items-center gap-1 text-left">
+              <span>Launch DA Portal</span> →
+            </button>
+          </div>
+
+          <!-- 4. IA Portal Card -->
+          <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between hover:shadow-md hover:border-gov-primary transition group">
+            <div class="space-y-3">
+              <div class="w-10 h-10 rounded-xl bg-purple-50 text-purple-700 flex items-center justify-center font-bold text-lg border border-purple-100">
+                🛠️
+              </div>
+              <h3 class="font-bold text-slate-800 text-base group-hover:text-gov-primary transition">Implementing Agency Portal</h3>
+              <p class="text-xs text-slate-600 leading-relaxed">Field execution agencies report physical progress %, update structural milestones, record payment vouchers, and submit progress details.</p>
+            </div>
+            <button onclick="setRoleAndOpen('implementing_agency')" class="mt-5 text-xs font-bold text-gov-primary hover:text-blue-800 flex items-center gap-1 text-left">
+              <span>Launch Agency Portal</span> →
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Connected Dataset & Coverage Status Component -->
+      <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div>
+            <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
+              <span>🔌 Connected Data Sources</span>
+              <span class="bg-emerald-100 text-emerald-800 text-xs font-bold px-2.5 py-0.5 rounded-full border border-emerald-200">Connected & Live</span>
+            </h3>
+            <p class="text-xs text-slate-500">Real-time status of underlying project and payment datasets.</p>
+          </div>
+          <button onclick="fetchAnalyticsOverview()" class="text-xs font-bold text-gov-primary hover:underline">
+            🔄 Refresh Status
+          </button>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+          <div class="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+            <div class="text-slate-500 font-semibold uppercase">Historical Projects Dataset</div>
+            <div id="coverage-projects-count" class="text-xl font-bold text-slate-800">--</div>
+            <div class="text-[11px] text-slate-500">Source: all_states_projects.csv</div>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+            <div class="text-slate-500 font-semibold uppercase">Payment Events Dataset</div>
+            <div id="coverage-payments-count" class="text-xl font-bold text-emerald-700">--</div>
+            <div class="text-[11px] text-slate-500">Source: all_states_payment_events.csv</div>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+            <div class="text-slate-500 font-semibold uppercase">States & UTs Covered</div>
+            <div id="coverage-states-count" class="text-xl font-bold text-gov-primary">--</div>
+            <div class="text-[11px] text-slate-500">Across all Indian states</div>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+            <div class="text-slate-500 font-semibold uppercase">Live Application Database</div>
+            <div id="coverage-live-count" class="text-xl font-bold text-amber-700">--</div>
+            <div class="text-[11px] text-slate-500">Source: mplads_live.db</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- 2. PUBLIC / CITIZEN VIEW -->
+    <section id="view-citizen" class="space-y-6 hidden">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+        <div>
+          <h2 class="text-xl font-bold text-gov-dark">Public MPLADS Works Explorer</h2>
+          <p class="text-xs text-slate-500">Transparent real-time lookup across sanctioned works and contractor payments.</p>
+        </div>
+        <div class="text-xs bg-slate-100 px-3.5 py-2 rounded-xl text-slate-700 border border-slate-200 font-medium">
+          Showing <span id="works-count-label" class="font-black text-gov-primary">...</span> matching works
+        </div>
+      </div>
+
+      <!-- Top Filter Bar -->
+      <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-3">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+          <!-- Keyword / ID Search -->
+          <div class="lg:col-span-2">
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Search Title or Work ID</label>
+            <input type="text" id="filter-q" placeholder="Enter Work ID or title keyword..." class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-gov-primary focus:outline-hidden" onkeyup="if(event.key==='Enter') applyWorksFilter()">
+          </div>
+
+          <!-- State -->
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">State</label>
+            <select id="filter-state" class="w-full text-xs border border-slate-300 rounded-lg px-2.5 py-2 focus:ring-2 focus:ring-gov-primary focus:outline-hidden" onchange="onStateFilterChange(this.value)">
+              <option value="">All States</option>
+            </select>
+          </div>
+
+          <!-- District -->
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">District</label>
+            <select id="filter-district" class="w-full text-xs border border-slate-300 rounded-lg px-2.5 py-2 focus:ring-2 focus:ring-gov-primary focus:outline-hidden" onchange="applyWorksFilter()">
+              <option value="">All Districts</option>
+            </select>
+          </div>
+
+          <!-- Category -->
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Category</label>
+            <select id="filter-category" class="w-full text-xs border border-slate-300 rounded-lg px-2.5 py-2 focus:ring-2 focus:ring-gov-primary focus:outline-hidden" onchange="applyWorksFilter()">
+              <option value="">All Categories</option>
+            </select>
+          </div>
+
+          <!-- Status -->
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Status</label>
+            <select id="filter-status" class="w-full text-xs border border-slate-300 rounded-lg px-2.5 py-2 focus:ring-2 focus:ring-gov-primary focus:outline-hidden" onchange="applyWorksFilter()">
+              <option value="">All Statuses</option>
+              <option value="RECOMMENDED">Recommended (Live)</option>
+              <option value="APPROVED">Approved / Sanctioned</option>
+              <option value="IN_PROGRESS">In Progress</option>
+              <option value="COMPLETED">Completed</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-100">
+          <div class="flex items-center gap-2 text-xs">
+            <span class="font-semibold text-slate-500">Data Scope:</span>
+            <button id="scope-all" onclick="setWorksScope('all')" class="px-3 py-1 rounded-md bg-gov-primary text-white font-semibold shadow-xs">All Records</button>
+            <button id="scope-live" onclick="setWorksScope('live')" class="px-3 py-1 rounded-md bg-slate-100 text-slate-700 font-semibold hover:bg-slate-200">Live DB Only</button>
+            <button id="scope-historical" onclick="setWorksScope('historical')" class="px-3 py-1 rounded-md bg-slate-100 text-slate-700 font-semibold hover:bg-slate-200">Historical CSV Only</button>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <button onclick="resetPublicFilters()" class="text-xs font-medium text-slate-500 hover:text-slate-800 px-3 py-1.5 rounded-lg border border-slate-200">
+              Clear Filters
+            </button>
+            <button onclick="applyWorksFilter()" class="bg-gov-primary hover:bg-blue-900 text-white text-xs font-bold px-5 py-2 rounded-lg transition shadow-xs flex items-center gap-1">
+              <span>🔍 Apply Search</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Works Table -->
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full gov-table text-left border-collapse">
+            <thead>
+              <tr>
+                <th>Work ID & Category</th>
+                <th>Work Title & Location</th>
+                <th>MP & Constituency</th>
+                <th>Sanction / Disbursed</th>
+                <th>Physical Progress</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="works-table-body">
+              <tr>
+                <td colspan="7" class="text-center py-8 text-slate-400">Loading works data...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Pagination Controls -->
+        <div class="p-4 border-t border-slate-200 flex items-center justify-between text-xs text-slate-600">
+          <div>
+            Page <span id="current-page-num" class="font-bold">1</span> of <span id="total-pages-num">...</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="prev-page-btn" onclick="changeWorksPage(-1)" class="px-3 py-1.5 rounded-md border border-slate-300 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed font-medium">Previous</button>
+            <button id="next-page-btn" onclick="changeWorksPage(1)" class="px-3 py-1.5 rounded-md border border-slate-300 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed font-medium">Next</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- 3. MP PORTAL VIEW -->
+    <section id="view-mp" class="space-y-6 hidden">
+      <!-- MP Profile & Action Bar -->
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-xs">
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-bold text-gov-primary uppercase tracking-wider">Member of Parliament Portal</span>
+          </div>
+          <h2 class="text-2xl font-black text-gov-dark mt-0.5" id="mp-header-name">MP Portal — Select MP</h2>
+          <div class="text-xs text-slate-600 font-medium mt-0.5">
+            Active Constituency: <strong id="mp-constituency" class="text-slate-800">--</strong> • State: <strong id="mp-state" class="text-slate-800">--</strong>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <div class="flex flex-col text-right">
+            <span class="text-[11px] text-slate-500 font-semibold">Switch MP Profile:</span>
+            <select id="mp-selector" onchange="changeActiveMp(this.value)" class="text-xs border border-slate-300 rounded-lg px-3 py-2 bg-slate-50 focus:ring-2 focus:ring-gov-primary font-semibold"></select>
+          </div>
+          <button onclick="openRecommendModal()" class="bg-gov-primary hover:bg-blue-900 text-white font-bold px-4 py-2.5 rounded-xl text-xs transition shadow-sm flex items-center gap-1.5 mt-auto">
+            <span>+ Recommend New Work</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- MP KPI Cards -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" id="mp-kpis">
+        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+          <div class="text-xs font-semibold text-slate-500 uppercase">Total Recommended Works</div>
+          <div class="text-3xl font-black text-slate-800 mt-1" id="mp-kpi-total">--</div>
+          <div class="text-xs text-amber-700 font-semibold mt-1" id="mp-kpi-pending">-- pending review</div>
+        </div>
+        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+          <div class="text-xs font-semibold text-slate-500 uppercase">Sanctioned Budget</div>
+          <div class="text-3xl font-black text-gov-primary mt-1" id="mp-kpi-sanction">--</div>
+          <div class="text-xs text-slate-500 mt-1 font-medium">Approved by District Authority</div>
+        </div>
+        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+          <div class="text-xs font-semibold text-slate-500 uppercase">Total Disbursed</div>
+          <div class="text-3xl font-black text-emerald-700 mt-1" id="mp-kpi-disbursed">--</div>
+          <div class="text-xs text-slate-500 mt-1 font-medium">Released from payment events</div>
+        </div>
+        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+          <div class="text-xs font-semibold text-slate-500 uppercase">Completed Works</div>
+          <div class="text-3xl font-black text-slate-800 mt-1" id="mp-kpi-completed">--</div>
+          <div class="text-xs text-blue-700 font-semibold mt-1" id="mp-kpi-ongoing">-- ongoing</div>
+        </div>
+      </div>
+
+      <!-- Live Recommended Works Section -->
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+        <div class="p-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+          <div>
+            <h3 class="font-bold text-slate-800 text-sm">Live Recommended Works</h3>
+            <p class="text-xs text-slate-500">Live development proposals submitted to District Authority workflow.</p>
+          </div>
+          <span class="text-xs bg-amber-100 text-amber-800 border border-amber-200 px-3 py-1 rounded-full font-bold">Live DB Sync</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full gov-table text-left">
+            <thead>
+              <tr>
+                <th>Work ID</th>
+                <th>Work Title & Category</th>
+                <th>Estimated / Sanction</th>
+                <th>Status</th>
+                <th>Physical Progress</th>
+                <th>Implementing Agency</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="mp-live-works-tbody">
+              <tr>
+                <td colspan="7" class="text-center py-6 text-slate-400">No live recommendations submitted yet. Click "+ Recommend New Work" to submit a live proposal.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Historical Constituency Works -->
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+        <div class="p-4 border-b border-slate-200">
+          <h3 class="font-bold text-slate-800 text-sm">Historical Constituency Works</h3>
+          <p class="text-xs text-slate-500">Real MPLADS projects recorded in all_states_projects.csv for this MP.</p>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full gov-table text-left">
+            <thead>
+              <tr>
+                <th>Work ID</th>
+                <th>Work Title</th>
+                <th>Sanction Date</th>
+                <th>Sanction Amount</th>
+                <th>Total Disbursed</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="mp-hist-works-tbody">
+              <tr>
+                <td colspan="7" class="text-center py-6 text-slate-400">Loading historical works...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- 4. DISTRICT AUTHORITY (DA) PORTAL VIEW -->
+    <section id="view-da" class="space-y-6 hidden">
+      <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <div class="text-xs font-bold text-gov-primary uppercase tracking-wider">District Administration Scrutiny</div>
+          <h2 class="text-2xl font-black text-gov-dark mt-0.5">District Authority Portal</h2>
+          <div class="text-xs text-slate-600 font-medium mt-0.5">
+            Active District: <strong id="da-district-name" class="text-slate-800">--</strong> • State: <strong id="da-state-name" class="text-slate-800">--</strong>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-3">
+          <div class="flex flex-col text-right">
+            <span class="text-[11px] text-slate-500 font-semibold">Select State:</span>
+            <select id="da-state-selector" onchange="onDaStateChange(this.value)" class="text-xs border border-slate-300 rounded-lg px-3 py-2 bg-slate-50 focus:ring-2 focus:ring-gov-primary font-semibold"></select>
+          </div>
+          <div class="flex flex-col text-right">
+            <span class="text-[11px] text-slate-500 font-semibold">Select District:</span>
+            <select id="da-district-selector" onchange="onDaDistrictChange(this.value)" class="text-xs border border-slate-300 rounded-lg px-3 py-2 bg-slate-50 focus:ring-2 focus:ring-gov-primary font-semibold"></select>
+          </div>
+        </div>
+      </div>
+
+      <!-- District KPI Cards (Dynamic for active district) -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" id="da-kpis">
+        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+          <div class="text-xs font-semibold text-slate-500 uppercase">District Total Works</div>
+          <div class="text-3xl font-black text-slate-800 mt-1" id="da-kpi-total">--</div>
+          <div class="text-xs text-slate-500 mt-1 font-medium">In selected district</div>
+        </div>
+        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+          <div class="text-xs font-semibold text-slate-500 uppercase">Sanctioned Outlay</div>
+          <div class="text-3xl font-black text-gov-primary mt-1" id="da-kpi-sanction">--</div>
+          <div class="text-xs text-slate-500 mt-1 font-medium">District administrative sanction</div>
+        </div>
+        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+          <div class="text-xs font-semibold text-slate-500 uppercase">Total Disbursed</div>
+          <div class="text-3xl font-black text-emerald-700 mt-1" id="da-kpi-disbursed">--</div>
+          <div class="text-xs text-slate-500 mt-1 font-medium">Released to vendors</div>
+        </div>
+        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+          <div class="text-xs font-semibold text-slate-500 uppercase">Completed Works</div>
+          <div class="text-3xl font-black text-slate-800 mt-1" id="da-kpi-completed">--</div>
+          <div class="text-xs text-blue-700 font-semibold mt-1" id="da-kpi-ongoing">-- ongoing</div>
+        </div>
+      </div>
+
+      <!-- SECTION A: Pending MP Recommendations Requiring Scrutiny -->
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+        <div class="p-4 border-b border-slate-200 bg-amber-50/60 flex items-center justify-between">
+          <div>
+            <h3 class="font-bold text-amber-950 text-sm flex items-center gap-2">
+              <span>📥 SECTION A: Pending MP Recommendations</span>
+              <span id="da-pending-badge" class="bg-amber-200 text-amber-900 text-xs px-2.5 py-0.5 rounded-full font-bold">0</span>
+            </h3>
+            <p class="text-xs text-amber-800">Review proposed works, verify public purpose, approve sanction budget and assign implementing agency.</p>
+          </div>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full gov-table text-left">
+            <thead>
+              <tr>
+                <th>Work ID</th>
+                <th>Recommending MP</th>
+                <th>Work Title & Purpose</th>
+                <th>Estimated Outlay</th>
+                <th>Submission Date</th>
+                <th>Status</th>
+                <th>Administrative Action</th>
+              </tr>
+            </thead>
+            <tbody id="da-pending-tbody">
+              <tr>
+                <td colspan="7" class="text-center py-8 text-slate-400">No pending recommendations currently in queue.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- SECTION B: Existing Works in District -->
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+        <div class="p-4 border-b border-slate-200 flex items-center justify-between">
+          <div>
+            <h3 class="font-bold text-slate-800 text-sm">SECTION B: Existing Works in Selected District</h3>
+            <p class="text-xs text-slate-500">Browse historical CSV works and active approved live works in <span id="da-district-sub" class="font-bold text-slate-700">...</span>.</p>
+          </div>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full gov-table text-left">
+            <thead>
+              <tr>
+                <th>Work ID</th>
+                <th>Work Title & Category</th>
+                <th>MP & Constituency</th>
+                <th>Sanction Amount</th>
+                <th>Total Disbursed</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="da-active-tbody">
+              <tr>
+                <td colspan="7" class="text-center py-8 text-slate-400">Loading works for selected district...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- 5. IMPLEMENTING AGENCY (IA) PORTAL VIEW -->
+    <section id="view-ia" class="space-y-6 hidden">
+      <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <div class="text-xs font-bold text-gov-primary uppercase tracking-wider">Field Execution Division</div>
+          <h2 class="text-2xl font-black text-gov-dark mt-0.5">Implementing Agency Portal</h2>
+          <div class="text-xs text-slate-600 font-medium mt-0.5">
+            Role: <strong id="ia-agency-name" class="text-slate-800">Designated Field Execution Division</strong>
+          </div>
+        </div>
+        <span class="text-xs bg-blue-100 text-blue-900 px-3.5 py-2 rounded-xl border border-blue-200 font-bold">
+          Field Progress & Milestone Updates
+        </span>
+      </div>
+
+      <!-- Assigned Works Table -->
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+        <div class="p-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+          <div>
+            <h3 class="font-bold text-slate-800 text-sm">Assigned Live Works</h3>
+            <p class="text-xs text-slate-500">Select an assigned project to update physical progress percentage, milestone, and expenditure.</p>
+          </div>
+          <span id="ia-assigned-count" class="text-xs bg-slate-200 font-bold px-3 py-1 rounded-full text-slate-800">0 Works</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full gov-table text-left">
+            <thead>
+              <tr>
+                <th>Work ID</th>
+                <th>Work Title & Category</th>
+                <th>Sanction Budget</th>
+                <th>Total Disbursed</th>
+                <th>Physical Progress</th>
+                <th>Current Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="ia-assigned-tbody">
+              <tr>
+                <td colspan="7" class="text-center py-8 text-slate-400">No approved live works assigned yet. Works will appear here once approved by District Authority.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- 6. DATA ANALYTICS & CHARTS VIEW -->
+    <section id="view-analytics" class="space-y-6 hidden">
+      <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs">
+        <h2 class="text-2xl font-black text-gov-dark">National MPLADS Data Analytics</h2>
+        <p class="text-xs text-slate-500 font-medium mt-0.5">Deterministic statistics computed directly from connected projects and payment event datasets.</p>
+      </div>
+
+      <!-- Chart Grid -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- State-Wise Works Chart -->
+        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-3">
+          <h3 class="font-bold text-slate-800 text-base">State-Wise Project Distribution</h3>
+          <p class="text-xs text-slate-500">Total works sanctioned by state/UT.</p>
+          <div class="h-72">
+            <canvas id="chart-states"></canvas>
+          </div>
+        </div>
+
+        <!-- Portal Execution Status Chart -->
+        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-3">
+          <h3 class="font-bold text-slate-800 text-base">Portal Execution Stages</h3>
+          <p class="text-xs text-slate-500">Breakdown of projects across execution phases.</p>
+          <div class="h-72">
+            <canvas id="chart-status"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- State Summary Data Table -->
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+        <div class="p-4 border-b border-slate-200 bg-slate-50">
+          <h3 class="font-bold text-slate-800 text-sm">State-Wise Financial Summary (Calculated from Real Datasets)</h3>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full gov-table text-left">
+            <thead>
+              <tr>
+                <th>State</th>
+                <th>Total Projects</th>
+                <th>Sanctioned Outlay</th>
+                <th>Disbursed Outlay</th>
+                <th>Completed Works</th>
+                <th>Completion Rate</th>
+              </tr>
+            </thead>
+            <tbody id="analytics-states-tbody">
+              <!-- Rendered dynamically from API -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+
+  <!-- MODALS -->
+
+  <!-- A. MP Recommend New Work Modal -->
+  <div id="modal-recommend" class="fixed inset-0 modal-backdrop z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between border-b border-slate-200 pb-3">
+        <div>
+          <h3 class="font-bold text-gov-dark text-lg">Recommend New Constituency Work</h3>
+          <p class="text-xs text-slate-500">Formally submit a development project to the District Authority under MPLADS guidelines.</p>
+        </div>
+        <button onclick="closeModal('modal-recommend')" class="text-slate-400 hover:text-slate-600 text-2xl font-bold">&times;</button>
+      </div>
+
+      <form id="form-recommend" onsubmit="submitRecommendation(event)" class="space-y-4 text-xs">
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">Work Title *</label>
+          <input type="text" id="rec-title" required placeholder="Enter work title" class="w-full border border-slate-300 rounded-lg p-2.5 text-xs focus:ring-2 focus:ring-gov-primary focus:outline-hidden">
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Work Category *</label>
+            <select id="rec-category" required class="w-full border border-slate-300 rounded-lg p-2.5 text-xs focus:ring-2 focus:ring-gov-primary">
+              <!-- Populated dynamically -->
+            </select>
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Priority</label>
+            <select id="rec-priority" class="w-full border border-slate-300 rounded-lg p-2.5 text-xs focus:ring-2 focus:ring-gov-primary">
+              <option value="High">High Priority</option>
+              <option value="Medium" selected>Medium Priority</option>
+              <option value="Normal">Normal</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">State *</label>
+            <select id="rec-state" required onchange="onRecommendStateChange(this.value)" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-gov-primary"></select>
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">District *</label>
+            <select id="rec-district" required onchange="onRecommendDistrictChange(this.value)" class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-gov-primary"></select>
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Constituency *</label>
+            <select id="rec-constituency" required class="w-full border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-gov-primary"></select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Specific Location / Ward / Village *</label>
+            <input type="text" id="rec-location" required placeholder="Enter locality or village" class="w-full border border-slate-300 rounded-lg p-2.5 text-xs">
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Estimated Outlay Amount (₹) *</label>
+            <input type="number" id="rec-amount" required min="1000" step="1000" placeholder="Enter estimated amount in ₹" class="w-full border border-slate-300 rounded-lg p-2.5 text-xs font-semibold text-slate-800">
+          </div>
+        </div>
+
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">Public Purpose & Beneficiary Group *</label>
+          <textarea id="rec-purpose" rows="2" required placeholder="Describe public purpose and community beneficiaries." class="w-full border border-slate-300 rounded-lg p-2.5 text-xs"></textarea>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-3 border-t border-slate-200">
+          <button type="button" onclick="closeModal('modal-recommend')" class="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-100 font-medium">Cancel</button>
+          <button type="submit" class="px-5 py-2 bg-gov-primary hover:bg-blue-800 text-white rounded-lg font-semibold shadow-xs">Submit Recommendation</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+
+  <!-- B. District Authority Review Modal -->
+  <div id="modal-review" class="fixed inset-0 modal-backdrop z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between border-b border-slate-200 pb-3">
+        <div>
+          <h3 class="font-bold text-gov-dark text-lg">Scrutiny & Sanction Order</h3>
+          <p class="text-xs text-slate-500">District Authority review of proposed MPLADS work.</p>
+        </div>
+        <button onclick="closeModal('modal-review')" class="text-slate-400 hover:text-slate-600 text-2xl font-bold">&times;</button>
+      </div>
+
+      <div class="bg-slate-50 p-3.5 rounded-lg border border-slate-200 space-y-1 text-xs">
+        <div class="flex justify-between"><span class="text-slate-500">Work ID:</span> <span id="rev-work-id" class="font-mono font-bold text-slate-800">...</span></div>
+        <div class="flex justify-between"><span class="text-slate-500">Title:</span> <span id="rev-work-title" class="font-semibold text-slate-800">...</span></div>
+        <div class="flex justify-between"><span class="text-slate-500">Proposed Outlay:</span> <span id="rev-proposed-outlay" class="font-bold text-emerald-700">...</span></div>
+      </div>
+
+      <form id="form-review" onsubmit="submitReview(event)" class="space-y-4 text-xs">
+        <input type="hidden" id="rev-hidden-work-id">
+
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">Action Decision *</label>
+          <div class="flex gap-4">
+            <label class="flex items-center gap-1.5 cursor-pointer font-medium text-emerald-700">
+              <input type="radio" name="rev_action" value="APPROVE" checked onchange="toggleReviewAction(this.value)">
+              Approve & Administratively Sanction
+            </label>
+            <label class="flex items-center gap-1.5 cursor-pointer font-medium text-red-700">
+              <input type="radio" name="rev_action" value="RETURN" onchange="toggleReviewAction(this.value)">
+              Return to MP for Clarification
+            </label>
+          </div>
+        </div>
+
+        <div id="approve-fields" class="space-y-3">
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Sanctioned Amount (₹) *</label>
+            <input type="number" id="rev-sanction-amount" min="1000" step="1000" class="w-full border border-slate-300 rounded-lg p-2.5 text-xs font-bold text-slate-800">
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Assign Implementing Agency *</label>
+            <select id="rev-agency-select" class="w-full border border-slate-300 rounded-lg p-2.5 text-xs focus:ring-2 focus:ring-gov-primary">
+              <!-- Dynamically populated from backend -->
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">Administrative Remarks / Scrutiny Notes *</label>
+          <textarea id="rev-comments" rows="2" required placeholder="Administrative clearance, technical feasibility confirmed as per MPLADS guidelines." class="w-full border border-slate-300 rounded-lg p-2.5 text-xs"></textarea>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-3 border-t border-slate-200">
+          <button type="button" onclick="closeModal('modal-review')" class="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-100 font-medium">Cancel</button>
+          <button type="submit" id="rev-submit-btn" class="px-5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg font-semibold shadow-xs">
+            Confirm & Issue Sanction Order
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+
+  <!-- C. Implementing Agency Update Progress Modal -->
+  <div id="modal-progress" class="fixed inset-0 modal-backdrop z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between border-b border-slate-200 pb-3">
+        <div>
+          <h3 class="font-bold text-gov-dark text-lg">Submit Physical & Financial Progress</h3>
+          <p class="text-xs text-slate-500">Record milestone achievement, execution percentage and payment tranches.</p>
+        </div>
+        <button onclick="closeModal('modal-progress')" class="text-slate-400 hover:text-slate-600 text-2xl font-bold">&times;</button>
+      </div>
+
+      <div class="bg-slate-50 p-3 rounded-lg border border-slate-200 text-xs flex justify-between items-center">
+        <div>
+          <span class="text-slate-500">Project:</span> <strong id="prog-modal-title" class="text-slate-800">...</strong>
+        </div>
+        <div class="font-mono text-xs font-bold text-slate-600" id="prog-modal-wid">...</div>
+      </div>
+
+      <form id="form-progress" onsubmit="submitProgressUpdate(event)" class="space-y-4 text-xs">
+        <input type="hidden" id="prog-hidden-wid">
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Physical Progress (%) *</label>
+            <div class="flex items-center gap-2">
+              <input type="range" id="prog-range" min="0" max="100" value="50" class="w-full accent-gov-primary cursor-pointer" oninput="document.getElementById('prog-pct-num').value = this.value">
+              <input type="number" id="prog-pct-num" min="0" max="100" value="50" class="w-16 border border-slate-300 rounded p-1 text-center font-bold" oninput="document.getElementById('prog-range').value = this.value">
+            </div>
+          </div>
+
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Execution Status *</label>
+            <select id="prog-status" class="w-full border border-slate-300 rounded-lg p-2.5 text-xs font-semibold">
+              <option value="IN_PROGRESS">In Progress (Execution Ongoing)</option>
+              <option value="COMPLETED">Completed (Civil Work Done)</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">Milestone Stage *</label>
+          <select id="prog-milestone" class="w-full border border-slate-300 rounded-lg p-2.5 text-xs">
+            <option value="Planning & Tender">Planning & Tender Finalization</option>
+            <option value="Work Started">Work Started / Foundation Laid</option>
+            <option value="Execution / Civil Work" selected>Execution / Civil Structure</option>
+            <option value="Major Milestone Reached">Major Structural Milestone</option>
+            <option value="Finishing & Inspection">Finishing & Inspection</option>
+            <option value="Completed & Certified">Completed & Certified</option>
+          </select>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Expenditure Incurred in this Update (₹)</label>
+            <input type="number" id="prog-expenditure" min="0" step="1000" value="0" placeholder="0" class="w-full border border-slate-300 rounded-lg p-2.5 text-xs font-semibold">
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Payment / Voucher Reference</label>
+            <input type="text" id="prog-voucher" placeholder="Enter voucher or Measurement Book reference" class="w-full border border-slate-300 rounded-lg p-2.5 text-xs">
+          </div>
+        </div>
+
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">Progress Details & Field Notes *</label>
+          <textarea id="prog-desc" rows="2" required placeholder="Describe actual physical work completed on ground." class="w-full border border-slate-300 rounded-lg p-2.5 text-xs"></textarea>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-3 border-t border-slate-200">
+          <button type="button" onclick="closeModal('modal-progress')" class="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-100 font-medium">Cancel</button>
+          <button type="submit" class="px-5 py-2 bg-gov-primary hover:bg-blue-800 text-white rounded-lg font-semibold shadow-xs">
+            Submit Progress Update
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+
+  <!-- D. Work Details Modal -->
+  <div id="modal-detail" class="fixed inset-0 modal-backdrop z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl max-w-3xl w-full p-6 shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto">
+      <div class="flex items-start justify-between border-b border-slate-200 pb-3">
+        <div>
+          <div class="flex items-center gap-2">
+            <span id="dtl-badge" class="badge-status badge-approved">...</span>
+            <span id="dtl-source-tag" class="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-mono font-bold">...</span>
+          </div>
+          <h3 id="dtl-title" class="font-bold text-gov-dark text-lg mt-1">...</h3>
+          <div class="text-xs text-slate-500 font-mono" id="dtl-wid">...</div>
+        </div>
+        <button onclick="closeModal('modal-detail')" class="text-slate-400 hover:text-slate-600 text-2xl font-bold">&times;</button>
+      </div>
+
+      <!-- Detail Grid -->
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs bg-slate-50 p-4 rounded-xl border border-slate-200">
+        <div>
+          <div class="text-slate-500 font-medium">State & District:</div>
+          <div id="dtl-geo" class="font-semibold text-slate-800 mt-0.5">...</div>
+        </div>
+        <div>
+          <div class="text-slate-500 font-medium">Constituency:</div>
+          <div id="dtl-constituency" class="font-semibold text-slate-800 mt-0.5">...</div>
+        </div>
+        <div>
+          <div class="text-slate-500 font-medium">Recommending MP:</div>
+          <div id="dtl-mp" class="font-semibold text-gov-primary mt-0.5">...</div>
+        </div>
+        <div>
+          <div class="text-slate-500 font-medium">Category:</div>
+          <div id="dtl-category" class="font-semibold text-slate-800 mt-0.5">...</div>
+        </div>
+        <div>
+          <div class="text-slate-500 font-medium">Sanction Date:</div>
+          <div id="dtl-sanction-date" class="font-semibold text-slate-800 mt-0.5">...</div>
+        </div>
+        <div>
+          <div class="text-slate-500 font-medium">Completion Date:</div>
+          <div id="dtl-completion-date" class="font-semibold text-slate-800 mt-0.5">...</div>
+        </div>
+      </div>
+
+      <!-- Financial Progress Meter -->
+      <div class="bg-white p-4 rounded-xl border border-slate-200 space-y-2">
+        <div class="flex justify-between text-xs font-semibold">
+          <span>Physical Progress</span>
+          <span id="dtl-pct-label" class="text-gov-primary font-bold">0%</span>
+        </div>
+        <div class="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+          <div id="dtl-progress-bar" class="bg-gov-primary h-2.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4 pt-2 text-xs">
+          <div class="p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+            <span class="text-slate-500 font-medium">Sanctioned Outlay:</span>
+            <div id="dtl-sanction-amt" class="text-sm font-bold text-slate-800 mt-0.5">--</div>
+          </div>
+          <div class="p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+            <span class="text-slate-500 font-medium">Total Disbursed:</span>
+            <div id="dtl-disbursed-amt" class="text-sm font-bold text-emerald-700 mt-0.5">--</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Description / Purpose -->
+      <div class="space-y-1 text-xs">
+        <h4 class="font-bold text-slate-800 uppercase tracking-wide">Work Scope & Description</h4>
+        <p id="dtl-desc" class="text-slate-600 leading-relaxed bg-slate-50 p-3 rounded-lg border border-slate-200">...</p>
+      </div>
+
+      <!-- Payment Tranches Table -->
+      <div class="space-y-2 text-xs">
+        <h4 class="font-bold text-slate-800 uppercase tracking-wide flex items-center justify-between">
+          <span>Contractor Payment Events (PFMS Tranches)</span>
+          <span id="dtl-pay-count" class="text-[11px] font-normal text-slate-500">0 events</span>
+        </h4>
+        <div class="border border-slate-200 rounded-lg overflow-hidden max-h-48 overflow-y-auto">
+          <table class="w-full gov-table text-left">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Contractor / Vendor</th>
+                <th>Status</th>
+                <th>Disbursed Amount</th>
+              </tr>
+            </thead>
+            <tbody id="dtl-payments-tbody">
+              <tr>
+                <td colspan="4" class="text-center py-4 text-slate-400">No payment events recorded.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="flex justify-end pt-2 border-t border-slate-200">
+        <button onclick="closeModal('modal-detail')" class="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-semibold text-xs">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="bg-gov-dark text-slate-400 text-xs py-8 border-t border-slate-800 mt-12">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
+      <div>
+        <p class="font-bold text-white text-sm">MPLADS Monitoring & Transparency Platform</p>
+        <p class="text-[11px] text-slate-400 mt-0.5">Integrated Project Life-Cycle & Citizen Transparency Portal</p>
+        <p class="text-[11px] text-slate-500 mt-1">Powered by real all_states_projects.csv & all_states_payment_events.csv historical audit datasets.</p>
+      </div>
+      <div class="flex items-center gap-4 text-[11px] text-slate-400">
+        <span>Open Project Governance</span>
+        <span>•</span>
+        <span>MPLADS Data Portal</span>
+        <span>•</span>
+        <span>Integrated Workflow</span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>
