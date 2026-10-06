@@ -1943,6 +1943,20 @@ function getMetricDisplayValue(item) {
   return `${item.project_count} works`;
 }
 
+function normalizeStateName(name) {
+  if (!name) return "";
+  let s = String(name).trim().toLowerCase();
+  s = s.replace(/&/g, "and");
+  s = s.replace(/\s+/g, " ");
+  if (s.includes("andaman")) return "andaman and nicobar islands";
+  if (s.includes("dadra") || s.includes("daman")) return "dadra and nagar haveli and daman and diu";
+  if (s === "orissa" || s === "odisha") return "odisha";
+  if (s === "uttaranchal" || s === "uttarakhand") return "uttarakhand";
+  if (s.includes("pondicherry") || s.includes("puducherry")) return "puducherry";
+  if (s.includes("jammu")) return "jammu and kashmir";
+  return s;
+}
+
 async function renderIndiaStatesGeoJsonLayer() {
   if (!leafletMapInstance || !window.L) return;
 
@@ -1956,9 +1970,10 @@ async function renderIndiaStatesGeoJsonLayer() {
 
     leafletGeoJsonLayer = L.geoJSON(geoData, {
       style: (feature) => {
-        const stateName = feature.properties.name;
-        const stData = nationalRiskData.find(s => s.state.toLowerCase() === stateName.toLowerCase());
-        const isSelected = heatmapSelectedState && heatmapSelectedState.toLowerCase() === stateName.toLowerCase();
+        const rawStateName = feature.properties.name || feature.properties.state || feature.properties.shapeName || "";
+        const normGeoName = normalizeStateName(rawStateName);
+        const stData = nationalRiskData.find(s => normalizeStateName(s.state) === normGeoName);
+        const isSelected = heatmapSelectedState && normalizeStateName(heatmapSelectedState) === normGeoName;
 
         if (!stData || stData.project_count === 0) {
           return {
@@ -1978,8 +1993,9 @@ async function renderIndiaStatesGeoJsonLayer() {
         };
       },
       onEachFeature: (feature, layer) => {
-        const stateName = feature.properties.name;
-        const stData = nationalRiskData.find(s => s.state.toLowerCase() === stateName.toLowerCase());
+        const rawStateName = feature.properties.name || feature.properties.state || feature.properties.shapeName || "";
+        const normGeoName = normalizeStateName(rawStateName);
+        const stData = nationalRiskData.find(s => normalizeStateName(s.state) === normGeoName);
 
         if (stData) {
           layer.bindTooltip(`
@@ -1999,7 +2015,7 @@ async function renderIndiaStatesGeoJsonLayer() {
         } else {
           layer.bindTooltip(`
             <div class="p-2 font-sans text-xs bg-white text-slate-800 rounded-lg shadow-md border border-slate-200">
-              <strong class="text-slate-800">${stateName}</strong>
+              <strong class="text-slate-800">${rawStateName}</strong>
               <div class="text-slate-500 font-medium mt-0.5">⚪ Insufficient Monitoring Data</div>
             </div>
           `, { sticky: true });
@@ -2014,7 +2030,8 @@ async function renderIndiaStatesGeoJsonLayer() {
             leafletGeoJsonLayer.resetStyle(e.target);
           },
           click: (e) => {
-            selectHeatmapState(stateName);
+            const matchingStateInDb = nationalRiskData.find(s => normalizeStateName(s.state) === normGeoName);
+            selectHeatmapState(matchingStateInDb ? matchingStateInDb.state : rawStateName);
           }
         });
       }
