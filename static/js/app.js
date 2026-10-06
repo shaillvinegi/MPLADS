@@ -2066,13 +2066,14 @@ function getMetricColorForFeature(stData) {
 }
 
 async function selectHeatmapState(stateName) {
-  const stData = nationalRiskData.find(s => s.state.toLowerCase() === stateName.toLowerCase());
+  const normTarget = normalizeStateName(stateName);
+  const stData = nationalRiskData.find(s => normalizeStateName(s.state) === normTarget);
   if (!stData) {
     alert(`Insufficient monitoring data available for ${stateName} in the current dataset scope.`);
     return;
   }
 
-  heatmapSelectedState = stateName;
+  heatmapSelectedState = stData.state;
   heatmapSelectedDistrict = null;
   updateHeatmapBreadcrumbs();
 
@@ -2080,7 +2081,7 @@ async function selectHeatmapState(stateName) {
     renderIndiaStatesGeoJsonLayer();
   }
 
-  loadStateDistrictHeatmapData(stateName);
+  loadStateDistrictHeatmapData(stData.state);
 }
 
 async function loadStateDistrictHeatmapData(stateName) {
