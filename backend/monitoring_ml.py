@@ -69,7 +69,7 @@ def run_monitoring_pipeline(conn: sqlite3.Connection, contamination: float = 0.0
     df['budget_monitoring_status'] = df.apply(get_budget_status, axis=1)
 
     # 3. Delay Features & Rules
-    ref_now = pd.to_datetime('2026-09-29')
+    ref_now = pd.Timestamp.now().normalize()
     df['rec_dt'] = pd.to_datetime(df['recommended_date'], errors='coerce')
     df['sanc_dt'] = pd.to_datetime(df['sanction_date'], errors='coerce')
     df['exp_comp_dt'] = pd.to_datetime(df['expected_completion_date_proxy'], errors='coerce')

@@ -350,10 +350,12 @@ def get_works(
             h_params.append(category.strip())
         if is_valid_filter(status):
             st = status.strip().upper()
-            if st == "COMPLETED":
+            if st in ("COMPLETED", "WORK COMPLETED"):
                 h_conditions.append("work_completion_status = 'COMPLETED'")
-            elif st in ("IN_PROGRESS", "SANCTIONED", "ONGOING"):
-                h_conditions.append("work_completion_status != 'COMPLETED'")
+            elif st in ("IN_PROGRESS", "ONGOING"):
+                h_conditions.append("work_completion_status != 'COMPLETED' AND portal_execution_status != 'Sanction'")
+            elif st in ("SANCTIONED", "APPROVED", "SANCTION"):
+                h_conditions.append("portal_execution_status = 'Sanction'")
             else:
                 h_conditions.append("UPPER(portal_execution_status) = UPPER(?)")
                 h_params.append(st)
@@ -392,7 +394,7 @@ def get_works(
                 mp_name,
                 sanction_amount,
                 total_disbursed,
-                work_completion_status as status,
+                work_completion_status,
                 portal_execution_status,
                 sanction_date,
                 completion_date,
@@ -402,7 +404,16 @@ def get_works(
             ORDER BY sanction_date DESC
             LIMIT ? OFFSET ?
         """, h_params + [hist_limit, hist_offset])
-        hist_records = [dict(r) for r in h_cur.fetchall()]
+        raw_hist = [dict(r) for r in h_cur.fetchall()]
+        hist_records = []
+        for r in raw_hist:
+            if r["work_completion_status"] == "COMPLETED":
+                r["status"] = "COMPLETED"
+            elif r["portal_execution_status"] == "Sanction":
+                r["status"] = "SANCTIONED"
+            else:
+                r["status"] = "IN_PROGRESS"
+            hist_records.append(r)
 
     total_count = len(live_records) + hist_total
     total_sanction = l_sum_sanc + h_sum_sanc
@@ -442,7 +453,7 @@ def get_work_detail(
     h_db: sqlite3.Connection = Depends(get_historical_db),
     l_db: sqlite3.Connection = Depends(get_live_db)
 ):
-    """Fetches comprehensive project details, milestones, and payment tranches."""
+    """Fetches comprehensive project details, milestones, payment tranches, ML monitoring metrics, and active alerts."""
     # Check live works first
     l_cur = l_db.cursor()
     l_cur.execute("SELECT * FROM live_works WHERE work_id = ?", (work_id,))
@@ -461,6 +472,29 @@ def get_work_detail(
         # Fetch audit logs
         l_cur.execute("SELECT * FROM audit_logs WHERE work_id = ? ORDER BY created_at DESC", (work_id,))
         logs = [dict(r) for r in l_cur.fetchall()]
+
+        sanction_amt = d["sanction_amount"] or 0.0
+        disb_amt = d["total_disbursed"] or 0.0
+
+        alerts_list = []
+        if disb_amt > sanction_amt and sanction_amt > 0:
+            alerts_list.append({
+                "alert_type": "Potential Budget Overrun",
+                "severity": "HIGH",
+                "reason": f"Disbursed funds (INR {disb_amt:,.2f}) exceed sanctioned outlay (INR {sanction_amt:,.2f}).",
+                "explanation": "Reported cumulative disbursements exceed initial sanctioned budget allocation."
+            })
+
+        monitoring_data = {
+            "anomaly_risk_score": 0.0,
+            "anomaly_status": "NORMAL",
+            "delay_status": "ONGOING_WITHIN_TARGET" if d["status"] != "COMPLETED" else "ON_TIME",
+            "schedule_delay_days": 0,
+            "budget_monitoring_status": "POTENTIAL_BUDGET_OVERRUN" if (disb_amt > sanction_amt and sanction_amt > 0) else ("FULLY_DISBURSED" if (disb_amt == sanction_amt and sanction_amt > 0) else "WITHIN_SANCTION"),
+            "payment_tranche_count": len(payments),
+            "max_single_tranche_ratio": max([(p.get("reported_fund_disbursed_amount", 0) / sanction_amt) for p in payments], default=0.0) if sanction_amt > 0 else 0.0,
+            "vendor_unique_count": len(set(p.get("vendor_name_normalized") or p.get("vendor_name_raw") for p in payments if p.get("vendor_name_normalized") or p.get("vendor_name_raw")))
+        }
 
         return {
             "work": {
@@ -491,7 +525,9 @@ def get_work_detail(
             },
             "payments": payments,
             "progress_updates": updates,
-            "audit_trail": logs
+            "audit_trail": logs,
+            "monitoring": monitoring_data,
+            "alerts": alerts_list
         }
 
     # Check historical works
@@ -516,7 +552,92 @@ def get_work_detail(
         """, (work_id,))
         pay_rows = [dict(r) for r in h_cur.fetchall()]
 
+        # Query project_monitoring_features for ML screening & delay/budget metrics
+        h_cur.execute("SELECT * FROM project_monitoring_features WHERE work_id = ?", (work_id,))
+        mon_row = h_cur.fetchone()
+
+        monitoring_data = {}
+        alerts_list = []
+
+        if mon_row:
+            m = dict(mon_row)
+            monitoring_data = {
+                "anomaly_risk_score": m.get("anomaly_risk_score", 0.0),
+                "anomaly_status": m.get("anomaly_status", "NORMAL"),
+                "raw_anomaly_score": m.get("raw_anomaly_score", 0.0),
+                "anomaly_prediction": m.get("anomaly_prediction", 1),
+                "delay_status": m.get("delay_status", "ON_TIME"),
+                "schedule_delay_days": m.get("schedule_delay_days", 0),
+                "sanction_lead_time_days": m.get("sanction_lead_time_days", 0),
+                "expected_duration_days": m.get("expected_duration_days", 0),
+                "actual_duration_days": m.get("actual_duration_days"),
+                "budget_monitoring_status": m.get("budget_monitoring_status", "WITHIN_SANCTION"),
+                "budget_variance_amount": m.get("budget_variance_amount", 0.0),
+                "budget_disbursement_ratio": m.get("budget_disbursement_ratio", 0.0),
+                "payment_tranche_count": m.get("payment_tranche_count", 0),
+                "max_single_tranche_ratio": m.get("max_single_tranche_ratio", 0.0),
+                "vendor_unique_count": m.get("vendor_unique_count", 0),
+                "first_payment_date": m.get("first_payment_date", ""),
+                "latest_payment_date": m.get("latest_payment_date", "")
+            }
+
+            sanc_val = m.get("sanction_amount") or hd.get("sanction_amount") or 0.0
+            disb_val = m.get("total_disbursed") or hd.get("total_disbursed") or 0.0
+
+            if m.get("budget_monitoring_status") == "POTENTIAL_BUDGET_OVERRUN" or (disb_val > sanc_val and sanc_val > 0):
+                alerts_list.append({
+                    "alert_type": "Potential Budget Overrun",
+                    "severity": "HIGH",
+                    "reason": f"Disbursed funds (INR {disb_val:,.2f}) exceed sanctioned outlay (INR {sanc_val:,.2f}).",
+                    "explanation": "Reported cumulative disbursements exceed initial sanctioned budget allocation."
+                })
+            if m.get("delay_status") in ("DELAYED", "ONGOING_DELAYED"):
+                alerts_list.append({
+                    "alert_type": "Delayed Project",
+                    "severity": "HIGH" if m.get("delay_status") == "DELAYED" else "MEDIUM",
+                    "reason": f"Schedule delay recorded: {m.get('schedule_delay_days', 0)} days past expected completion target.",
+                    "explanation": "Recorded completion date or current timestamp exceeds expected completion timeline."
+                })
+            if m.get("anomaly_status") == "POTENTIAL ANOMALY":
+                alerts_list.append({
+                    "alert_type": "Potential ML Anomaly",
+                    "severity": "HIGH" if m.get("anomaly_risk_score", 0) >= 80 else "MEDIUM",
+                    "reason": f"Isolation Forest Anomaly Risk Score: {m.get('anomaly_risk_score', 0)}/100.",
+                    "explanation": "Statistical feature pattern differs significantly from standard project baseline."
+                })
+            if m.get("max_single_tranche_ratio", 0) >= 0.95 and m.get("payment_tranche_count", 0) > 1:
+                alerts_list.append({
+                    "alert_type": "Payment Concentration",
+                    "severity": "MEDIUM",
+                    "reason": f"Single tranche concentration: {round(m.get('max_single_tranche_ratio', 0)*100, 1)}% of sanction in one payment.",
+                    "explanation": "A high proportion of total sanctioned funds was released in a single expenditure event."
+                })
+
         is_completed = (hd["work_completion_status"] == "COMPLETED")
+
+        audit_trail = []
+        if hd.get("recommended_date"):
+            audit_trail.append({
+                "actor_name": hd["mp_name"] or "Member of Parliament",
+                "actor_role": "Member of Parliament",
+                "action": "Recommended Work",
+                "created_at": hd["recommended_date"]
+            })
+        if hd.get("sanction_date"):
+            audit_trail.append({
+                "actor_name": hd["ida"] or "District Authority",
+                "actor_role": "District Authority",
+                "action": "Sanctioned Work Outlay",
+                "created_at": hd["sanction_date"]
+            })
+        if hd.get("completion_date") and is_completed:
+            audit_trail.append({
+                "actor_name": hd["primary_vendor"] or "Implementing Agency",
+                "actor_role": "Implementing Agency",
+                "action": "Civil Work Marked Completed",
+                "created_at": hd["completion_date"]
+            })
+
         return {
             "work": {
                 "work_id": hd["work_id"],
@@ -531,9 +652,9 @@ def get_work_detail(
                 "mp_name": hd["mp_name"],
                 "sanction_amount": hd["sanction_amount"],
                 "total_disbursed": hd["total_disbursed"],
-                "status": hd["work_completion_status"],
+                "status": "COMPLETED" if is_completed else ("SANCTIONED" if hd.get("portal_execution_status") == "Sanction" else "IN_PROGRESS"),
                 "portal_execution_status": hd["portal_execution_status"],
-                "physical_progress_pct": 100 if is_completed else (75 if hd["total_disbursed"] > 0 else 25),
+                "physical_progress_pct": 100 if is_completed else None,
                 "recommended_date": hd["recommended_date"],
                 "sanction_date": hd["sanction_date"],
                 "expected_completion_date": hd["expected_completion_date_proxy"],
@@ -543,20 +664,9 @@ def get_work_detail(
             },
             "payments": pay_rows,
             "progress_updates": [],
-            "audit_trail": [
-                {
-                    "actor_name": hd["mp_name"],
-                    "actor_role": "Member of Parliament",
-                    "action": "Recommended Work",
-                    "created_at": hd["recommended_date"]
-                },
-                {
-                    "actor_name": hd["ida"],
-                    "actor_role": "District Authority",
-                    "action": "Sanctioned Work",
-                    "created_at": hd["sanction_date"]
-                }
-            ]
+            "audit_trail": audit_trail,
+            "monitoring": monitoring_data,
+            "alerts": alerts_list
         }
 
     raise HTTPException(status_code=404, detail=f"Work with ID '{work_id}' not found.")
@@ -1394,7 +1504,7 @@ def get_monitoring_alerts(
     limit: int = Query(50, ge=1, le=200),
     h_db: sqlite3.Connection = Depends(get_historical_db)
 ):
-    """Returns deterministic alerts for potential budget overruns, schedule delays, ML anomalies, and payment spikes."""
+    """Returns deterministic alerts for potential budget overruns, schedule delays, ML anomalies, and payment concentration spikes."""
     h_cur = h_db.cursor()
 
     def is_valid_filter(val):
@@ -1414,6 +1524,7 @@ def get_monitoring_alerts(
 
     where_sql = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
+    # Evaluate alert conditions across ALL matching project records to determine true total_alerts
     h_cur.execute(f"""
         SELECT work_id, state, district, constituency, mp_name, work_title, sanction_amount, total_disbursed,
                budget_monitoring_status, delay_status, payment_tranche_count, max_single_tranche_ratio,
@@ -1421,8 +1532,7 @@ def get_monitoring_alerts(
         FROM project_monitoring_features
         {where_sql}
         ORDER BY anomaly_risk_score DESC, schedule_delay_days DESC
-        LIMIT ?
-    """, params + [limit])
+    """, params)
 
     rows = [dict(r) for r in h_cur.fetchall()]
     alerts = []
@@ -1448,7 +1558,7 @@ def get_monitoring_alerts(
                 "district": r["district"],
                 "work_title": r["work_title"],
                 "alert_type": "Delayed Project",
-                "severity": "MEDIUM",
+                "severity": "HIGH" if r["delay_status"] == "DELAYED" else "MEDIUM",
                 "measured_value": f"Status: {r['delay_status']}",
                 "anomaly_risk_score": r["anomaly_risk_score"]
             })
@@ -1471,9 +1581,9 @@ def get_monitoring_alerts(
                 "state": r["state"],
                 "district": r["district"],
                 "work_title": r["work_title"],
-                "alert_type": "Unusual Payment Pattern",
+                "alert_type": "Payment Concentration",
                 "severity": "MEDIUM",
-                "measured_value": f"Single payment ratio {round(r['max_single_tranche_ratio']*100, 1)}%",
+                "measured_value": f"Payment Concentration: Single tranche ratio {round(r['max_single_tranche_ratio']*100, 1)}% of sanctioned amount",
                 "anomaly_risk_score": r["anomaly_risk_score"]
             })
 
@@ -1484,7 +1594,7 @@ def get_monitoring_alerts(
 def get_analytics_monitoring(
     h_db: sqlite3.Connection = Depends(get_historical_db)
 ):
-    """Provides backend data for 10 dynamic charts in the Analytics section."""
+    """Provides backend data for 8 dynamic charts in the Analytics section."""
     h_cur = h_db.cursor()
 
     # 1. State-wise project count
@@ -1549,6 +1659,265 @@ def get_analytics_monitoring(
         "tranche_dist": tranche_dist,
         "anomaly_dist": anomaly_dist,
         "monthly_payments": monthly_payments
+    }
+
+
+@app.get("/api/analytics/risk-map")
+def get_analytics_risk_map(
+    metric: Optional[str] = Query("avg_risk"),
+    state: Optional[str] = Query(None),
+    h_db: sqlite3.Connection = Depends(get_historical_db)
+):
+    """Provides aggregated ML risk metrics and anomaly distributions for state and district heat maps."""
+    h_cur = h_db.cursor()
+
+    if state and state.strip() and not state.strip().lower().startswith("all"):
+        # District level breakdown for selected state
+        h_cur.execute("""
+            SELECT 
+                district,
+                COUNT(*) as project_count,
+                COALESCE(SUM(sanction_amount), 0.0) as total_sanction,
+                COALESCE(SUM(total_disbursed), 0.0) as total_disbursed,
+                AVG(anomaly_risk_score) as avg_risk,
+                SUM(CASE WHEN anomaly_risk_score >= 50 OR anomaly_status = 'POTENTIAL ANOMALY' THEN 1 ELSE 0 END) as high_risk_count,
+                SUM(CASE WHEN anomaly_status = 'POTENTIAL ANOMALY' THEN 1 ELSE 0 END) as anomaly_count,
+                SUM(CASE WHEN delay_status IN ('DELAYED', 'ONGOING_DELAYED') THEN 1 ELSE 0 END) as delayed_count
+            FROM project_monitoring_features
+            WHERE UPPER(state) = UPPER(?) AND district IS NOT NULL AND TRIM(district) != ''
+            GROUP BY district
+            ORDER BY avg_risk DESC, project_count DESC
+        """, (state.strip(),))
+        raw_districts = [dict(r) for r in h_cur.fetchall()]
+        districts = []
+        for r in raw_districts:
+            cnt = r["project_count"] or 0
+            sanc = r["total_sanction"] or 0.0
+            disb = r["total_disbursed"] or 0.0
+            avg_r = round(r["avg_risk"] or 0.0, 1)
+            high_risk = r["high_risk_count"] or 0
+            anom_cnt = r["anomaly_count"] or 0
+            del_cnt = r["delayed_count"] or 0
+
+            disb_rate = round((disb / sanc * 100), 1) if sanc > 0 else 0.0
+            anom_rate = round((anom_cnt / cnt * 100), 1) if cnt > 0 else 0.0
+            delay_rate = round((del_cnt / cnt * 100), 1) if cnt > 0 else 0.0
+
+            if avg_r < 40.0:
+                risk_level = "LOWER"
+                risk_label = "Lower Statistical Risk"
+                color = "#107C41"
+            elif avg_r < 65.0:
+                risk_level = "MODERATE"
+                risk_label = "Moderate Statistical Risk"
+                color = "#F58220"
+            else:
+                risk_level = "HIGHER"
+                risk_label = "Higher Statistical Risk"
+                color = "#DC2626"
+
+            districts.append({
+                "district": r["district"],
+                "project_count": cnt,
+                "total_sanction": sanc,
+                "total_disbursed": disb,
+                "disbursement_rate": disb_rate,
+                "avg_risk": avg_r,
+                "high_risk_count": high_risk,
+                "anomaly_count": anom_cnt,
+                "anomaly_rate": anom_rate,
+                "delayed_count": del_cnt,
+                "delay_rate": delay_rate,
+                "risk_level": risk_level,
+                "risk_label": risk_label,
+                "color": color
+            })
+
+        total_proj = sum(d["project_count"] for d in districts)
+        total_sanc = sum(d["total_sanction"] for d in districts)
+        total_disb = sum(d["total_disbursed"] for d in districts)
+        sum_risk = sum(d["avg_risk"] * d["project_count"] for d in districts)
+        high_risk = sum(d["high_risk_count"] for d in districts)
+        anom_cnt = sum(d["anomaly_count"] for d in districts)
+        del_cnt = sum(d["delayed_count"] for d in districts)
+
+        avg_risk_val = round((sum_risk / total_proj), 1) if total_proj > 0 else 0.0
+        disb_rate_val = round((total_disb / total_sanc * 100), 1) if total_sanc > 0 else 0.0
+
+        return {
+            "level": "state",
+            "state": state.strip(),
+            "selected_metric": metric or "avg_risk",
+            "state_summary": {
+                "state": state.strip(),
+                "project_count": total_proj,
+                "total_sanction": total_sanc,
+                "total_disbursed": total_disb,
+                "disbursement_rate": disb_rate_val,
+                "avg_risk": avg_risk_val,
+                "high_risk_count": high_risk,
+                "anomaly_count": anom_cnt,
+                "delayed_count": del_cnt
+            },
+            "districts": districts
+        }
+    else:
+        # National level breakdown (States)
+        h_cur.execute("""
+            SELECT 
+                state,
+                COUNT(*) as project_count,
+                COALESCE(SUM(sanction_amount), 0.0) as total_sanction,
+                COALESCE(SUM(total_disbursed), 0.0) as total_disbursed,
+                AVG(anomaly_risk_score) as avg_risk,
+                SUM(CASE WHEN anomaly_risk_score >= 50 OR anomaly_status = 'POTENTIAL ANOMALY' THEN 1 ELSE 0 END) as high_risk_count,
+                SUM(CASE WHEN anomaly_status = 'POTENTIAL ANOMALY' THEN 1 ELSE 0 END) as anomaly_count,
+                SUM(CASE WHEN delay_status IN ('DELAYED', 'ONGOING_DELAYED') THEN 1 ELSE 0 END) as delayed_count
+            FROM project_monitoring_features
+            WHERE state IS NOT NULL AND TRIM(state) != ''
+            GROUP BY state
+            ORDER BY avg_risk DESC, project_count DESC
+        """)
+        raw_states = [dict(r) for r in h_cur.fetchall()]
+        states = []
+        for r in raw_states:
+            cnt = r["project_count"] or 0
+            sanc = r["total_sanction"] or 0.0
+            disb = r["total_disbursed"] or 0.0
+            avg_r = round(r["avg_risk"] or 0.0, 1)
+            high_risk = r["high_risk_count"] or 0
+            anom_cnt = r["anomaly_count"] or 0
+            del_cnt = r["delayed_count"] or 0
+
+            disb_rate = round((disb / sanc * 100), 1) if sanc > 0 else 0.0
+            anom_rate = round((anom_cnt / cnt * 100), 1) if cnt > 0 else 0.0
+            delay_rate = round((del_cnt / cnt * 100), 1) if cnt > 0 else 0.0
+
+            if avg_r < 40.0:
+                risk_level = "LOWER"
+                risk_label = "Lower Statistical Risk"
+                color = "#107C41"
+            elif avg_r < 65.0:
+                risk_level = "MODERATE"
+                risk_label = "Moderate Statistical Risk"
+                color = "#F58220"
+            else:
+                risk_level = "HIGHER"
+                risk_label = "Higher Statistical Risk"
+                color = "#DC2626"
+
+            states.append({
+                "state": r["state"],
+                "project_count": cnt,
+                "total_sanction": sanc,
+                "total_disbursed": disb,
+                "disbursement_rate": disb_rate,
+                "avg_risk": avg_r,
+                "high_risk_count": high_risk,
+                "anomaly_count": anom_cnt,
+                "anomaly_rate": anom_rate,
+                "delayed_count": del_cnt,
+                "delay_rate": delay_rate,
+                "risk_level": risk_level,
+                "risk_label": risk_label,
+                "color": color
+            })
+
+        total_proj = sum(s["project_count"] for s in states)
+        total_sanc = sum(s["total_sanction"] for s in states)
+        total_disb = sum(s["total_disbursed"] for s in states)
+        sum_risk = sum(s["avg_risk"] * s["project_count"] for s in states)
+        high_risk = sum(s["high_risk_count"] for s in states)
+        anom_cnt = sum(s["anomaly_count"] for s in states)
+        del_cnt = sum(s["delayed_count"] for s in states)
+
+        avg_risk_val = round((sum_risk / total_proj), 1) if total_proj > 0 else 0.0
+        disb_rate_val = round((total_disb / total_sanc * 100), 1) if total_sanc > 0 else 0.0
+
+        return {
+            "level": "national",
+            "selected_metric": metric or "avg_risk",
+            "national_summary": {
+                "project_count": total_proj,
+                "total_sanction": total_sanc,
+                "total_disbursed": total_disb,
+                "disbursement_rate": disb_rate_val,
+                "avg_risk": avg_risk_val,
+                "high_risk_count": high_risk,
+                "anomaly_count": anom_cnt,
+                "delayed_count": del_cnt
+            },
+            "states": states
+        }
+
+
+@app.get("/api/analytics/risk-map/projects")
+def get_analytics_risk_map_projects(
+    state: str = Query(...),
+    district: str = Query(...),
+    limit: int = Query(50, ge=1, le=100),
+    page: int = Query(1, ge=1),
+    h_db: sqlite3.Connection = Depends(get_historical_db)
+):
+    """Returns compact project list for selected state & district to inspect in Project 360 view."""
+    h_cur = h_db.cursor()
+    offset = (page - 1) * limit
+
+    h_cur.execute("""
+        SELECT COUNT(*) FROM project_monitoring_features
+        WHERE TRIM(UPPER(state)) = TRIM(UPPER(?)) AND TRIM(UPPER(district)) = TRIM(UPPER(?))
+    """, (state.strip(), district.strip()))
+    total_count = h_cur.fetchone()[0] or 0
+
+    h_cur.execute("""
+        SELECT 
+            work_id,
+            work_title,
+            constituency,
+            mp_name,
+            work_completion_status,
+            portal_execution_status,
+            sanction_amount,
+            total_disbursed,
+            anomaly_risk_score,
+            anomaly_status,
+            delay_status
+        FROM project_monitoring_features
+        WHERE TRIM(UPPER(state)) = TRIM(UPPER(?)) AND TRIM(UPPER(district)) = TRIM(UPPER(?))
+        ORDER BY anomaly_risk_score DESC, sanction_amount DESC
+        LIMIT ? OFFSET ?
+    """, (state.strip(), district.strip(), limit, offset))
+    
+    rows = [dict(r) for r in h_cur.fetchall()]
+    items = []
+    for r in rows:
+        is_comp = (r["work_completion_status"] == "COMPLETED")
+        status = "COMPLETED" if is_comp else ("SANCTIONED" if r.get("portal_execution_status") == "Sanction" else "IN_PROGRESS")
+        sanc = r["sanction_amount"] or 0.0
+        disb = r["total_disbursed"] or 0.0
+        disb_rate = round((disb / sanc * 100), 1) if sanc > 0 else 0.0
+        
+        items.append({
+            "work_id": r["work_id"],
+            "work_title": r["work_title"],
+            "constituency": r["constituency"],
+            "mp_name": r["mp_name"],
+            "status": status,
+            "sanction_amount": sanc,
+            "total_disbursed": disb,
+            "disbursement_rate": disb_rate,
+            "anomaly_risk_score": round(r["anomaly_risk_score"] or 0.0, 1),
+            "anomaly_status": r["anomaly_status"] or "NORMAL",
+            "delay_status": r["delay_status"] or "ON_TIME"
+        })
+
+    return {
+        "state": state.strip(),
+        "district": district.strip(),
+        "total": total_count,
+        "page": page,
+        "limit": limit,
+        "items": items
     }
 
 

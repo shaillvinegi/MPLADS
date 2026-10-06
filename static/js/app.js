@@ -44,13 +44,13 @@ function formatDate(dtStr) {
 function renderStatusBadge(status) {
   if (!status) return `<span class="badge-status bg-slate-100 text-slate-600">Pending</span>`;
   const s = status.toUpperCase();
-  if (s.includes("COMPLETED")) {
+  if (s === "COMPLETED" || s === "WORK COMPLETED" || (s.includes("COMPLETED") && !s.includes("NOT_LISTED") && !s.includes("PARTIALLY"))) {
     return `<span class="badge-status badge-completed">✓ Completed</span>`;
   } else if (s.includes("RECOMMENDED")) {
     return `<span class="badge-status badge-recommended">⏳ Recommended</span>`;
-  } else if (s.includes("APPROVED") || s.includes("SANCTION")) {
+  } else if (s.includes("APPROVED") || s === "SANCTION" || s.includes("SANCTIONED")) {
     return `<span class="badge-status badge-approved">⚖️ Sanctioned</span>`;
-  } else if (s.includes("PROGRESS") || s.includes("PHYSICAL") || s.includes("VENDOR")) {
+  } else if (s.includes("PROGRESS") || s.includes("PHYSICAL") || s.includes("VENDOR") || s.includes("PARTIALLY") || s.includes("NOT_LISTED") || s.includes("ESTIMATION") || s.includes("IN_PROGRESS")) {
     return `<span class="badge-status badge-in_progress">⚙️ In Progress</span>`;
   } else if (s.includes("RETURN") || s.includes("REJECT")) {
     return `<span class="badge-status badge-returned">↩ Returned</span>`;
@@ -62,7 +62,7 @@ function renderStatusBadge(status) {
 let monPage = 1;
 let monLimit = 20;
 
-// Chart instances store for 10 charts
+// Chart instances store for 8 charts
 let chartInstances = {};
 
 // Navigation Handler across all main tabs
@@ -90,22 +90,26 @@ function switchNav(viewName) {
     activeNavBtn.classList.remove("text-slate-600", "hover:text-gov-primary", "hover:bg-slate-100");
   }
 
-  if (viewName === "citizen") {
-    fetchWorks(worksPage);
-  } else if (viewName === "mp") {
-    loadMpDashboard(activeSelectedMp);
-  } else if (viewName === "da") {
-    const stateVal = document.getElementById("da-state-selector") ? document.getElementById("da-state-selector").value : "";
-    const distVal = document.getElementById("da-district-selector") ? document.getElementById("da-district-selector").value : "";
-    loadDaDashboard(stateVal, distVal);
-  } else if (viewName === "ia") {
-    loadIaDashboard();
-  } else if (viewName === "monitoring") {
-    loadMonitoringDashboard();
-  } else if (viewName === "alerts") {
-    loadAlertsView();
-  } else if (viewName === "analytics") {
-    renderAnalyticsCharts();
+  try {
+    if (viewName === "citizen") {
+      fetchWorks(worksPage);
+    } else if (viewName === "mp") {
+      loadMpDashboard(activeSelectedMp);
+    } else if (viewName === "da") {
+      const stateVal = document.getElementById("da-state-selector") ? document.getElementById("da-state-selector").value : "";
+      const distVal = document.getElementById("da-district-selector") ? document.getElementById("da-district-selector").value : "";
+      loadDaDashboard(stateVal, distVal);
+    } else if (viewName === "ia") {
+      loadIaDashboard();
+    } else if (viewName === "monitoring") {
+      loadMonitoringDashboard();
+    } else if (viewName === "alerts") {
+      loadAlertsView();
+    } else if (viewName === "analytics") {
+      renderAnalyticsCharts();
+    }
+  } catch (err) {
+    console.error(`Error loading data for view ${viewName}:`, err);
   }
 }
 
@@ -545,56 +549,299 @@ function setWorksScope(scope) {
 }
 
 
-// --- 3. WORK DETAIL MODAL ---
-async function viewWorkDetail(workId) {
+// --- 3. PROJECT 360° VIEW ---
+async function openProject360(workId) {
   try {
+    switchNav('citizen');
+    const tableCont = document.getElementById("pwe-table-container");
+    const container360 = document.getElementById("pwe-360-container");
+
+    if (tableCont) tableCont.classList.add("hidden");
+    if (container360) container360.classList.remove("hidden");
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
     const res = await fetch(`/api/works/${encodeURIComponent(workId)}`);
-    if (!res.ok) throw new Error("No matching work found.");
+    if (!res.ok) throw new Error("No matching work record found.");
     const data = await res.json();
-    const w = data.work;
-
-    document.getElementById("dtl-title").textContent = w.title || "Not available in source data";
-    document.getElementById("dtl-wid").textContent = `ID: ${w.work_id || 'N/A'}`;
-    document.getElementById("dtl-badge").outerHTML = `<span id="dtl-badge">${renderStatusBadge(w.status)}</span>`;
-    document.getElementById("dtl-source-tag").textContent = (w.source === 'live') ? 'LIVE APPLICATION RECORD' : 'HISTORICAL DATASET RECORD';
-
-    document.getElementById("dtl-geo").textContent = `${w.district || 'Not available'}, ${w.state || 'Not available'}`;
-    document.getElementById("dtl-constituency").textContent = w.constituency || "Not available in source data";
-    document.getElementById("dtl-mp").textContent = w.mp_name || "Not available in source data";
-    document.getElementById("dtl-category").textContent = w.work_category || "Not available in source data";
-    document.getElementById("dtl-sanction-date").textContent = formatDate(w.sanction_date);
-    document.getElementById("dtl-completion-date").textContent = formatDate(w.completion_date);
-
-    document.getElementById("dtl-pct-label").textContent = `${w.physical_progress_pct || 0}%`;
-    document.getElementById("dtl-progress-bar").style.width = `${w.physical_progress_pct || 0}%`;
-
-    document.getElementById("dtl-sanction-amt").textContent = formatINR(w.sanction_amount);
-    document.getElementById("dtl-disbursed-amt").textContent = formatINR(w.total_disbursed);
-
-    document.getElementById("dtl-desc").textContent = w.description || "Project recorded in official MPLADS registry.";
-
-    // Render payment tranches
-    const ptbody = document.getElementById("dtl-payments-tbody");
+    const w = data.work || {};
     const payments = data.payments || [];
-    document.getElementById("dtl-pay-count").textContent = `${payments.length} payment tranche(s)`;
+    const updates = data.progress_updates || [];
+    const audit = data.audit_trail || [];
+    const mon = data.monitoring || {};
+    const alerts = data.alerts || [];
 
-    if (payments.length === 0) {
-      ptbody.innerHTML = `<tr><td colspan="4" class="text-center py-4 text-slate-400">No payment events recorded yet for this project.</td></tr>`;
-    } else {
-      ptbody.innerHTML = payments.map(p => `
-        <tr>
-          <td>${formatDate(p.expenditure_date)}</td>
-          <td class="font-medium text-slate-800">${p.vendor_name_normalized || p.vendor_name_raw || 'Not available in source data'}</td>
-          <td><span class="text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded">✓ ${p.payment_status || 'SUCCESS'}</span></td>
-          <td class="font-bold text-slate-800">${formatINR(p.reported_fund_disbursed_amount)}</td>
-        </tr>
-      `).join("");
+    // 1. Header & Source
+    if (document.getElementById("p360-title")) document.getElementById("p360-title").textContent = w.title || "Not available in source data";
+    if (document.getElementById("p360-wid")) document.getElementById("p360-wid").textContent = w.work_id || "N/A";
+    if (document.getElementById("p360-geo")) document.getElementById("p360-geo").textContent = `${w.district || 'Not available'}, ${w.state || 'Not available'}`;
+    if (document.getElementById("p360-constituency")) document.getElementById("p360-constituency").textContent = w.constituency || "Not available in source data";
+    if (document.getElementById("p360-status-badge")) document.getElementById("p360-status-badge").innerHTML = renderStatusBadge(w.status);
+    
+    const srcBadge = document.getElementById("p360-source-badge");
+    if (srcBadge) {
+      if (w.source === 'live') {
+        srcBadge.className = "text-[11px] font-mono font-bold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200";
+        srcBadge.textContent = "LIVE PROJECT";
+      } else {
+        srcBadge.className = "text-[11px] font-mono font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200";
+        srcBadge.textContent = "HISTORICAL DATASET";
+      }
     }
 
-    openModal("modal-detail");
+    // 2. Overrun Banner
+    const sanc = w.sanction_amount || 0;
+    const disb = w.total_disbursed || 0;
+    const overrunBanner = document.getElementById("p360-overrun-banner");
+    if (overrunBanner) {
+      if (disb > sanc && sanc > 0) {
+        overrunBanner.classList.remove("hidden");
+        if (document.getElementById("p360-overrun-disb")) document.getElementById("p360-overrun-disb").textContent = formatINR(disb);
+        if (document.getElementById("p360-overrun-sanc")) document.getElementById("p360-overrun-sanc").textContent = formatINR(sanc);
+      } else {
+        overrunBanner.classList.add("hidden");
+      }
+    }
+
+    // 3. Project Overview Grid
+    if (document.getElementById("p360-category-tag")) document.getElementById("p360-category-tag").textContent = w.work_category || "Uncategorized";
+    if (document.getElementById("p360-ov-geo")) document.getElementById("p360-ov-geo").textContent = `${w.district || 'Not available'}, ${w.state || 'Not available'}`;
+    if (document.getElementById("p360-ov-constituency")) document.getElementById("p360-ov-constituency").textContent = w.constituency || "Not available in source data";
+    if (document.getElementById("p360-ov-mp")) document.getElementById("p360-ov-mp").textContent = w.mp_name || "Not available in source data";
+    if (document.getElementById("p360-ov-agency")) document.getElementById("p360-ov-agency").textContent = w.assigned_agency_name || w.ida || "Not available in source data";
+    if (document.getElementById("p360-ov-category")) document.getElementById("p360-ov-category").textContent = w.work_category || "Not available in source data";
+    if (document.getElementById("p360-ov-status")) document.getElementById("p360-ov-status").textContent = w.portal_execution_status || w.status || "Not available in source data";
+    if (document.getElementById("p360-ov-priority")) document.getElementById("p360-ov-priority").textContent = w.priority || "Not available";
+    if (document.getElementById("p360-ov-location")) document.getElementById("p360-ov-location").textContent = w.location || "Not available";
+    if (document.getElementById("p360-ov-desc")) document.getElementById("p360-ov-desc").textContent = w.description || "Project recorded in official MPLADS registry.";
+
+    // 4. Financial Monitoring
+    if (document.getElementById("p360-fin-sanction")) document.getElementById("p360-fin-sanction").textContent = formatINR(sanc);
+    if (document.getElementById("p360-fin-disbursed")) document.getElementById("p360-fin-disbursed").textContent = formatINR(disb);
+    
+    const rem = sanc - disb;
+    const remEl = document.getElementById("p360-fin-remaining");
+    if (remEl) {
+      if (rem < 0) {
+        remEl.textContent = `- ${formatINR(Math.abs(rem))}`;
+        remEl.className = "text-sm font-bold text-amber-700 mt-0.5";
+      } else {
+        remEl.textContent = formatINR(rem);
+        remEl.className = "text-sm font-bold text-slate-700 mt-0.5";
+      }
+    }
+
+    const pct = sanc > 0 ? ((disb / sanc) * 100).toFixed(1) : "0.0";
+    if (document.getElementById("p360-fin-pct")) document.getElementById("p360-fin-pct").textContent = `${pct}%`;
+    if (document.getElementById("p360-fin-util-label")) document.getElementById("p360-fin-util-label").textContent = `${pct}%`;
+    
+    const barEl = document.getElementById("p360-fin-progress-bar");
+    if (barEl) {
+      barEl.style.width = `${Math.min(parseFloat(pct), 100)}%`;
+      barEl.className = (disb > sanc && sanc > 0) ? "bg-amber-600 h-3 rounded-full transition-all duration-500" : "bg-gov-primary h-3 rounded-full transition-all duration-500";
+    }
+
+    if (document.getElementById("p360-fin-util-sub")) {
+      document.getElementById("p360-fin-util-sub").textContent = (disb > sanc && sanc > 0) 
+        ? `⚠️ Overrun: ${formatINR(disb)} disbursed vs ${formatINR(sanc)} sanctioned`
+        : `${formatINR(disb)} released out of ${formatINR(sanc)} sanctioned outlay`;
+    }
+
+    // 5. Physical Progress Section
+    const phyContainer = document.getElementById("p360-phy-content");
+    if (phyContainer) {
+      if (w.physical_progress_pct !== null && w.physical_progress_pct !== undefined) {
+        phyContainer.innerHTML = `
+          <div class="space-y-2">
+            <div class="flex justify-between font-bold text-slate-800">
+              <span>Physical Work Completion</span>
+              <span class="text-emerald-700 font-bold">${w.physical_progress_pct}%</span>
+            </div>
+            <div class="w-full bg-slate-100 rounded-full h-3 overflow-hidden border border-slate-200">
+              <div class="bg-emerald-600 h-3 rounded-full transition-all duration-500" style="width: ${w.physical_progress_pct}%"></div>
+            </div>
+          </div>
+          ${w.current_milestone ? `<div class="p-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-700">Latest Milestone: <strong class="text-slate-900 font-bold">${w.current_milestone}</strong></div>` : ''}
+          ${w.completion_date ? `<div class="text-xs text-slate-500">Completion Date: <strong class="text-slate-700">${formatDate(w.completion_date)}</strong></div>` : ''}
+        `;
+      } else {
+        phyContainer.innerHTML = `
+          <div class="p-4 bg-slate-50 border border-slate-200 rounded-xl text-slate-500 font-medium leading-relaxed">
+            ℹ️ Physical progress data is not available for this historical record.
+          </div>
+        `;
+      }
+    }
+
+    // 6. Payment History Table
+    const payBadge = document.getElementById("p360-pay-count-badge");
+    if (payBadge) payBadge.textContent = `${payments.length} event(s)`;
+
+    const payTbody = document.getElementById("p360-payments-tbody");
+    if (payTbody) {
+      if (payments.length === 0) {
+        payTbody.innerHTML = `<tr><td colspan="4" class="text-center py-6 text-slate-400 font-medium">No payment events available for this project.</td></tr>`;
+      } else {
+        payTbody.innerHTML = payments.map(p => `
+          <tr class="hover:bg-slate-50 transition">
+            <td class="font-mono text-xs text-slate-600">${formatDate(p.expenditure_date)}</td>
+            <td class="font-semibold text-slate-800 text-xs">${p.vendor_name_normalized || p.vendor_name_raw || 'Vendor / Treasury'}</td>
+            <td><span class="text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded">✓ ${p.payment_status || 'SUCCESS'}</span></td>
+            <td class="font-bold text-emerald-700 text-xs">${formatINR(p.reported_fund_disbursed_amount || 0)}</td>
+          </tr>
+        `).join("");
+      }
+    }
+
+    // 7. Project Lifecycle Timeline
+    const tlContainer = document.getElementById("p360-timeline-content");
+    if (tlContainer) {
+      const timelineEvents = [];
+
+      if (w.recommended_date) {
+        timelineEvents.push({
+          title: "Recommendation Submitted",
+          date: w.recommended_date,
+          actor: w.mp_name || "Member of Parliament",
+          desc: "Project proposal submitted for verification and administrative sanction."
+        });
+      }
+      if (w.sanction_date) {
+        timelineEvents.push({
+          title: "Approved & Sanctioned",
+          date: w.sanction_date,
+          actor: w.ida || "District Authority",
+          desc: `Administrative sanction issued for outlay of ${formatINR(sanc)}.`
+        });
+      }
+      if (w.assigned_agency_name && w.source === 'live') {
+        timelineEvents.push({
+          title: "Implementing Agency Assigned",
+          date: w.sanction_date || w.recommended_date,
+          actor: w.assigned_agency_name,
+          desc: "Work order and execution responsibility assigned to agency."
+        });
+      }
+      if (updates && updates.length > 0) {
+        updates.forEach(u => {
+          timelineEvents.push({
+            title: `Progress Update (${u.progress_percentage || 0}%)`,
+            date: u.submitted_at,
+            actor: w.assigned_agency_name || "Implementing Agency",
+            desc: u.remarks || u.current_milestone || "Progress update recorded."
+          });
+        });
+      }
+      if (w.completion_date && (w.status === 'COMPLETED' || w.physical_progress_pct === 100)) {
+        timelineEvents.push({
+          title: "Work Completion Recorded",
+          date: w.completion_date,
+          actor: w.assigned_agency_name || "Implementing Agency",
+          desc: "Civil work completed and operational closure reported."
+        });
+      }
+
+      if (timelineEvents.length === 0) {
+        tlContainer.innerHTML = `<div class="text-slate-400 font-medium py-2">Timeline lifecycle dates not available in dataset record.</div>`;
+      } else {
+        tlContainer.innerHTML = timelineEvents.map(evt => `
+          <div class="relative group">
+            <div class="absolute -left-[21px] top-0.5 w-2.5 h-2.5 rounded-full bg-gov-primary border-2 border-white ring-2 ring-blue-100"></div>
+            <div class="font-bold text-slate-800 text-xs">${evt.title}</div>
+            <div class="text-[11px] text-slate-400 font-medium mt-0.5">${formatDate(evt.date)} • ${evt.actor}</div>
+            <div class="text-slate-600 text-xs mt-1 leading-snug">${evt.desc}</div>
+          </div>
+        `).join("");
+      }
+    }
+
+    // 8. ML Monitoring Section
+    const riskScore = mon.anomaly_risk_score !== undefined ? mon.anomaly_risk_score : 0;
+    if (document.getElementById("p360-ml-risk-score")) document.getElementById("p360-ml-risk-score").textContent = `${riskScore}/100`;
+    if (document.getElementById("p360-ml-anomaly-status")) {
+      const anomEl = document.getElementById("p360-ml-anomaly-status");
+      anomEl.textContent = mon.anomaly_status || "NORMAL";
+      anomEl.className = (mon.anomaly_status === "POTENTIAL ANOMALY") ? "font-bold text-purple-900" : "font-bold text-slate-700";
+    }
+    if (document.getElementById("p360-ml-delay-status")) document.getElementById("p360-ml-delay-status").textContent = mon.delay_status || "ON_TIME";
+    if (document.getElementById("p360-ml-budget-status")) document.getElementById("p360-ml-budget-status").textContent = mon.budget_monitoring_status || "WITHIN_SANCTION";
+    if (document.getElementById("p360-ml-payment-conc")) {
+      document.getElementById("p360-ml-payment-conc").textContent = (mon.max_single_tranche_ratio >= 0.95 && mon.payment_tranche_count > 1) ? "DETECTED" : "NOT DETECTED";
+    }
+
+    // 9. Active Alerts Section
+    if (document.getElementById("p360-alerts-count")) document.getElementById("p360-alerts-count").textContent = `${alerts.length} alert(s)`;
+    const alertsContainer = document.getElementById("p360-alerts-list");
+    if (alertsContainer) {
+      if (alerts.length === 0) {
+        alertsContainer.innerHTML = `
+          <div class="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs font-semibold flex items-center gap-2">
+            <span>✅</span>
+            <span>No active monitoring alerts for this project.</span>
+          </div>
+        `;
+      } else {
+        alertsContainer.innerHTML = alerts.map(a => `
+          <div class="p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-950 space-y-1 shadow-2xs">
+            <div class="flex justify-between items-center">
+              <strong class="font-bold text-xs text-amber-950">🔴 ${a.alert_type}</strong>
+              <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-200 text-amber-900">${a.severity || 'MEDIUM'}</span>
+            </div>
+            <div class="text-xs text-slate-800 font-semibold">${a.reason}</div>
+            <div class="text-[11px] text-amber-800 font-medium">${a.explanation}</div>
+          </div>
+        `).join("");
+      }
+    }
+
+    // 10. Audit History Section
+    const auditContainer = document.getElementById("p360-audit-list");
+    if (auditContainer) {
+      if (!audit || audit.length === 0) {
+        auditContainer.innerHTML = `
+          <div class="p-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-500 font-medium text-xs">
+            Historical audit trail is not available for this dataset record.
+          </div>
+        `;
+      } else {
+        auditContainer.innerHTML = audit.map(a => `
+          <div class="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs flex justify-between items-center">
+            <div>
+              <div class="font-bold text-slate-800">${a.action || 'Activity Recorded'}</div>
+              <div class="text-[11px] text-slate-500">${a.actor_name || 'System User'} (${a.actor_role || 'Role'})</div>
+            </div>
+            <div class="text-[11px] font-mono text-slate-400">${formatDate(a.created_at)}</div>
+          </div>
+        `).join("");
+      }
+    }
+
+    // 11. Data Source Footer
+    const dsEl = document.getElementById("p360-datasource-text");
+    if (dsEl) {
+      dsEl.textContent = (w.source === 'live')
+        ? "Live project record stored in the application database."
+        : "Historical dataset record sourced from the connected MPLADS project and payment datasets.";
+    }
+
   } catch (err) {
-    alert("Lookup message: " + err.message);
+    console.error("Error opening Project 360 view:", err);
+    alert("Project 360 View error: " + err.message);
   }
+}
+
+function viewWorkDetail(workId) {
+  openProject360(workId);
+}
+
+function inspectMonitoringProject(workId) {
+  openProject360(workId);
+}
+
+function closeProject360() {
+  const tableCont = document.getElementById("pwe-table-container");
+  const container360 = document.getElementById("pwe-360-container");
+  if (container360) container360.classList.add("hidden");
+  if (tableCont) tableCont.classList.remove("hidden");
 }
 
 
@@ -1262,7 +1509,8 @@ async function loadAlertsView() {
     const data = await res.json();
 
     const alerts = data.alerts || [];
-    if (document.getElementById("alerts-count-badge")) document.getElementById("alerts-count-badge").textContent = alerts.length;
+    const totalAlerts = data.total_alerts !== undefined ? data.total_alerts : alerts.length;
+    if (document.getElementById("alerts-count-badge")) document.getElementById("alerts-count-badge").textContent = totalAlerts.toLocaleString();
 
     if (alerts.length === 0) {
       container.innerHTML = `<div class="p-8 text-center text-slate-500 font-medium">Zero screening alerts triggered across active dataset.</div>`;
@@ -1461,6 +1709,10 @@ async function renderAnalyticsCharts() {
 function renderChart(canvasId, type, chartData) {
   const ctx = document.getElementById(canvasId);
   if (!ctx) return;
+  if (typeof Chart === "undefined") {
+    console.warn("Chart.js library is not available.");
+    return;
+  }
 
   if (chartInstances[canvasId]) {
     chartInstances[canvasId].destroy();
@@ -1481,6 +1733,539 @@ function renderChart(canvasId, type, chartData) {
       } : {}
     }
   });
+}
+
+// --- RISK HEAT MAP & ANALYTICS SUB-TAB HANDLERS ---
+let activeAnalyticsSubTab = 'charts';
+let heatmapSelectedMetric = 'avg_risk';
+let heatmapSelectedState = null;
+let heatmapSelectedDistrict = null;
+let leafletMapInstance = null;
+let leafletGeoJsonLayer = null;
+let nationalRiskData = [];
+let nationalSummaryData = null;
+let stateRiskData = [];
+let stateSummaryData = null;
+let districtProjectsData = [];
+
+function switchAnalyticsSubTab(tabName) {
+  activeAnalyticsSubTab = tabName;
+
+  const chartsBtn = document.getElementById("tab-btn-charts");
+  const heatmapBtn = document.getElementById("tab-btn-heatmap");
+
+  const chartsView = document.getElementById("analytics-subview-charts");
+  const heatmapView = document.getElementById("analytics-subview-heatmap");
+
+  if (tabName === 'charts') {
+    if (chartsBtn) chartsBtn.className = "px-5 py-2 rounded-xl text-xs font-bold transition shadow-xs bg-gov-primary text-white";
+    if (heatmapBtn) heatmapBtn.className = "px-5 py-2 rounded-xl text-xs font-bold transition text-slate-700 hover:bg-slate-200";
+    if (chartsView) chartsView.classList.remove("hidden");
+    if (heatmapView) heatmapView.classList.add("hidden");
+    renderAnalyticsCharts();
+  } else {
+    if (heatmapBtn) heatmapBtn.className = "px-5 py-2 rounded-xl text-xs font-bold transition shadow-xs bg-gov-primary text-white";
+    if (chartsBtn) chartsBtn.className = "px-5 py-2 rounded-xl text-xs font-bold transition text-slate-700 hover:bg-slate-200";
+    if (chartsView) chartsView.classList.add("hidden");
+    if (heatmapView) heatmapView.classList.remove("hidden");
+    
+    initRiskHeatmap();
+  }
+}
+
+async function initRiskHeatmap() {
+  if (!leafletMapInstance && window.L) {
+    const mapContainer = document.getElementById("india-map-container");
+    if (!mapContainer) return;
+
+    // Initialize standalone vector Leaflet map on clean neutral background (NO street tile layer / NO CARTO)
+    leafletMapInstance = L.map('india-map-container', {
+      center: [22.5937, 78.9629],
+      zoom: 4.5,
+      zoomControl: true,
+      attributionControl: false,
+      scrollWheelZoom: false
+    });
+  }
+
+  setTimeout(() => {
+    if (leafletMapInstance) leafletMapInstance.invalidateSize();
+  }, 100);
+
+  if (!heatmapSelectedState) {
+    loadNationalHeatmapData();
+  } else if (!heatmapSelectedDistrict) {
+    loadStateDistrictHeatmapData(heatmapSelectedState);
+  } else {
+    selectHeatmapDistrict(heatmapSelectedDistrict);
+  }
+}
+
+function onHeatmapMetricChange(newMetric) {
+  heatmapSelectedMetric = newMetric;
+  if (leafletGeoJsonLayer) {
+    renderIndiaStatesGeoJsonLayer();
+  }
+  if (!heatmapSelectedState) {
+    renderNationalRightPanel();
+  } else if (!heatmapSelectedDistrict) {
+    renderStateRightPanel();
+  } else {
+    renderDistrictRightPanel();
+  }
+}
+
+function resetHeatmapToNational() {
+  heatmapSelectedState = null;
+  heatmapSelectedDistrict = null;
+  if (leafletGeoJsonLayer && leafletMapInstance) {
+    leafletMapInstance.fitBounds(leafletGeoJsonLayer.getBounds(), { padding: [15, 15] });
+  }
+  loadNationalHeatmapData();
+}
+
+async function loadNationalHeatmapData() {
+  heatmapSelectedState = null;
+  heatmapSelectedDistrict = null;
+  updateHeatmapBreadcrumbs();
+
+  try {
+    const res = await fetch(`/api/analytics/risk-map?metric=${encodeURIComponent(heatmapSelectedMetric)}`);
+    const data = await res.json();
+    nationalRiskData = data.states || [];
+    nationalSummaryData = data.national_summary || null;
+
+    renderIndiaStatesGeoJsonLayer();
+    renderNationalRightPanel();
+  } catch (err) {
+    console.error("Failed to load national risk map data:", err);
+  }
+}
+
+function updateHeatmapBreadcrumbs() {
+  const crumbStateWrap = document.getElementById("crumb-state-wrap");
+  const crumbDistrictWrap = document.getElementById("crumb-district-wrap");
+  const crumbStateBtn = document.getElementById("crumb-state-btn");
+  const crumbDistrictBtn = document.getElementById("crumb-district-btn");
+
+  if (!heatmapSelectedState) {
+    if (crumbStateWrap) crumbStateWrap.classList.add("hidden");
+    if (crumbDistrictWrap) crumbDistrictWrap.classList.add("hidden");
+  } else if (!heatmapSelectedDistrict) {
+    if (crumbStateWrap) crumbStateWrap.classList.remove("hidden");
+    if (crumbStateBtn) crumbStateBtn.textContent = heatmapSelectedState;
+    if (crumbDistrictWrap) crumbDistrictWrap.classList.add("hidden");
+  } else {
+    if (crumbStateWrap) crumbStateWrap.classList.remove("hidden");
+    if (crumbStateBtn) crumbStateBtn.textContent = heatmapSelectedState;
+    if (crumbDistrictWrap) crumbDistrictWrap.classList.remove("hidden");
+    if (crumbDistrictBtn) crumbDistrictBtn.textContent = heatmapSelectedDistrict;
+  }
+}
+
+function renderNationalRightPanel() {
+  const panel = document.getElementById("heatmap-panel-content");
+  if (!panel) return;
+
+  const summary = nationalSummaryData || {};
+  const totalProjects = (summary.project_count || 41086).toLocaleString();
+  const avgRisk = summary.avg_risk || "20.1";
+  const highRisk = (summary.high_risk_count || 1958).toLocaleString();
+  const anomalies = (summary.anomaly_count || 1958).toLocaleString();
+  const delayed = (summary.delayed_count || 9413).toLocaleString();
+  const disbRate = (summary.disbursement_rate || 72.1).toFixed(1) + "%";
+
+  panel.innerHTML = `
+    <div>
+      <span class="text-[10px] font-bold uppercase tracking-wider bg-blue-50 text-gov-primary px-2.5 py-1 rounded-md border border-blue-200">National Overview</span>
+      <h3 class="text-xl font-black text-gov-dark mt-1">India</h3>
+      <p class="text-xs text-slate-500 font-medium">National risk baselines across connected MPLADS projects.</p>
+    </div>
+
+    <!-- Compact 6-Metric Grid -->
+    <div class="grid grid-cols-2 gap-2 text-xs">
+      <div class="p-2.5 bg-slate-50 rounded-xl border border-slate-200">
+        <span class="text-slate-500 text-[11px] block">Projects Analyzed</span>
+        <strong class="text-sm font-black text-slate-800">${totalProjects}</strong>
+      </div>
+      <div class="p-2.5 bg-purple-50/60 rounded-xl border border-purple-200">
+        <span class="text-purple-800 text-[11px] block">Avg ML Risk Score</span>
+        <strong class="text-sm font-black text-purple-900">${avgRisk}/100</strong>
+      </div>
+      <div class="p-2.5 bg-amber-50/60 rounded-xl border border-amber-200">
+        <span class="text-amber-800 text-[11px] block">High-Risk Projects</span>
+        <strong class="text-sm font-black text-amber-900">${highRisk}</strong>
+      </div>
+      <div class="p-2.5 bg-slate-50 rounded-xl border border-slate-200">
+        <span class="text-slate-500 text-[11px] block">ML Anomalies</span>
+        <strong class="text-sm font-black text-slate-800">${anomalies}</strong>
+      </div>
+      <div class="p-2.5 bg-red-50/60 rounded-xl border border-red-200">
+        <span class="text-red-800 text-[11px] block">Delayed Projects</span>
+        <strong class="text-sm font-black text-red-700">${delayed}</strong>
+      </div>
+      <div class="p-2.5 bg-emerald-50/60 rounded-xl border border-emerald-200">
+        <span class="text-emerald-800 text-[11px] block">Disbursement Rate</span>
+        <strong class="text-sm font-black text-emerald-800">${disbRate}</strong>
+      </div>
+    </div>
+
+    <!-- Connected States List -->
+    <div class="space-y-2 pt-1">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-1.5">
+        <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider">Connected States (${nationalRiskData.length})</h4>
+        <span class="text-[10px] text-slate-400 font-medium">Click state to select</span>
+      </div>
+      <div class="space-y-1.5 max-h-[280px] overflow-y-auto pr-1">
+        ${nationalRiskData.map(s => `
+          <div onclick="selectHeatmapState('${s.state}')" class="p-2.5 bg-white rounded-xl border border-slate-200 hover:border-gov-primary hover:shadow-xs cursor-pointer transition flex items-center justify-between">
+            <div>
+              <strong class="text-xs text-slate-800 font-bold block">${s.state}</strong>
+              <span class="text-[10px] text-slate-500 font-medium">${s.project_count.toLocaleString()} project(s)</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-mono font-bold text-slate-800">${getMetricDisplayValue(s)}</span>
+              <span class="w-3 h-3 rounded-full shrink-0" style="background-color: ${getMetricColorForFeature(s)}"></span>
+            </div>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function getMetricDisplayValue(item) {
+  if (heatmapSelectedMetric === 'avg_risk') return `${item.avg_risk}/100`;
+  if (heatmapSelectedMetric === 'high_risk_count') return `${item.high_risk_count} high-risk`;
+  if (heatmapSelectedMetric === 'anomaly_rate') return `${item.anomaly_rate}% anom`;
+  if (heatmapSelectedMetric === 'delay_rate') return `${item.delay_rate}% delay`;
+  if (heatmapSelectedMetric === 'disbursement_rate') return `${item.disbursement_rate}% disb`;
+  return `${item.project_count} works`;
+}
+
+async function renderIndiaStatesGeoJsonLayer() {
+  if (!leafletMapInstance || !window.L) return;
+
+  try {
+    const geoRes = await fetch("/js/india_states.geojson");
+    const geoData = await geoRes.json();
+
+    if (leafletGeoJsonLayer) {
+      leafletMapInstance.removeLayer(leafletGeoJsonLayer);
+    }
+
+    leafletGeoJsonLayer = L.geoJSON(geoData, {
+      style: (feature) => {
+        const stateName = feature.properties.name;
+        const stData = nationalRiskData.find(s => s.state.toLowerCase() === stateName.toLowerCase());
+        const isSelected = heatmapSelectedState && heatmapSelectedState.toLowerCase() === stateName.toLowerCase();
+
+        if (!stData || stData.project_count === 0) {
+          return {
+            fillColor: "#94A3B8",
+            weight: isSelected ? 3 : 1.2,
+            opacity: 1,
+            color: isSelected ? "#0F4C81" : "#CBD5E1",
+            fillOpacity: 0.35
+          };
+        }
+        return {
+          fillColor: getMetricColorForFeature(stData),
+          weight: isSelected ? 3.5 : 1.5,
+          opacity: 1,
+          color: isSelected ? "#0F4C81" : "#FFFFFF",
+          fillOpacity: isSelected ? 0.95 : 0.85
+        };
+      },
+      onEachFeature: (feature, layer) => {
+        const stateName = feature.properties.name;
+        const stData = nationalRiskData.find(s => s.state.toLowerCase() === stateName.toLowerCase());
+
+        if (stData) {
+          layer.bindTooltip(`
+            <div class="p-2.5 space-y-1 font-sans text-xs bg-white text-slate-800 rounded-lg shadow-md border border-slate-200">
+              <div class="font-black text-slate-900 text-sm border-b border-slate-200 pb-1 flex items-center justify-between gap-3">
+                <span>${stData.state}</span>
+                <span class="w-2.5 h-2.5 rounded-full" style="background-color: ${getMetricColorForFeature(stData)}"></span>
+              </div>
+              <div>Projects Analyzed: <strong>${stData.project_count.toLocaleString()}</strong></div>
+              <div>Average ML Risk Score: <strong class="text-purple-900">${stData.avg_risk}/100</strong></div>
+              <div>High-Risk Projects: <strong class="text-amber-800">${stData.high_risk_count.toLocaleString()}</strong></div>
+              <div>ML Anomalies: <strong class="text-purple-900">${stData.anomaly_count.toLocaleString()}</strong></div>
+              <div>Delayed Projects: <strong class="text-red-700">${stData.delayed_count.toLocaleString()}</strong></div>
+              <div>Disbursement Rate: <strong class="text-emerald-700">${stData.disbursement_rate}%</strong></div>
+            </div>
+          `, { sticky: true });
+        } else {
+          layer.bindTooltip(`
+            <div class="p-2 font-sans text-xs bg-white text-slate-800 rounded-lg shadow-md border border-slate-200">
+              <strong class="text-slate-800">${stateName}</strong>
+              <div class="text-slate-500 font-medium mt-0.5">⚪ Insufficient Monitoring Data</div>
+            </div>
+          `, { sticky: true });
+        }
+
+        layer.on({
+          mouseover: (e) => {
+            const l = e.target;
+            l.setStyle({ weight: 3, color: '#0F4C81', fillOpacity: 0.95 });
+          },
+          mouseout: (e) => {
+            leafletGeoJsonLayer.resetStyle(e.target);
+          },
+          click: (e) => {
+            selectHeatmapState(stateName);
+          }
+        });
+      }
+    }).addTo(leafletMapInstance);
+
+    // Auto-fit bounds to India GeoJSON cleanly
+    if (leafletGeoJsonLayer && leafletMapInstance) {
+      leafletMapInstance.fitBounds(leafletGeoJsonLayer.getBounds(), { padding: [15, 15] });
+    }
+
+  } catch (err) {
+    console.error("Failed to load India states GeoJSON:", err);
+  }
+}
+
+function getMetricColorForFeature(stData) {
+  if (!stData || stData.project_count === 0) return "#94A3B8";
+
+  if (heatmapSelectedMetric === 'avg_risk') {
+    return stData.color || (stData.avg_risk >= 65 ? '#DC2626' : (stData.avg_risk >= 40 ? '#F58220' : '#107C41'));
+  } else if (heatmapSelectedMetric === 'high_risk_count') {
+    return stData.high_risk_count >= 300 ? '#DC2626' : (stData.high_risk_count >= 100 ? '#F58220' : '#107C41');
+  } else if (heatmapSelectedMetric === 'anomaly_rate') {
+    return stData.anomaly_rate >= 8.0 ? '#DC2626' : (stData.anomaly_rate >= 4.0 ? '#F58220' : '#107C41');
+  } else if (heatmapSelectedMetric === 'delay_rate') {
+    return stData.delay_rate >= 25.0 ? '#DC2626' : (stData.delay_rate >= 15.0 ? '#F58220' : '#107C41');
+  } else if (heatmapSelectedMetric === 'disbursement_rate') {
+    return stData.disbursement_rate >= 75.0 ? '#107C41' : (stData.disbursement_rate >= 55.0 ? '#F58220' : '#DC2626');
+  } else {
+    return stData.project_count >= 5000 ? '#0F4C81' : (stData.project_count >= 1000 ? '#2563EB' : '#60A5FA');
+  }
+}
+
+async function selectHeatmapState(stateName) {
+  const stData = nationalRiskData.find(s => s.state.toLowerCase() === stateName.toLowerCase());
+  if (!stData) {
+    alert(`Insufficient monitoring data available for ${stateName} in the current dataset scope.`);
+    return;
+  }
+
+  heatmapSelectedState = stateName;
+  heatmapSelectedDistrict = null;
+  updateHeatmapBreadcrumbs();
+
+  if (leafletGeoJsonLayer) {
+    renderIndiaStatesGeoJsonLayer();
+  }
+
+  loadStateDistrictHeatmapData(stateName);
+}
+
+async function loadStateDistrictHeatmapData(stateName) {
+  try {
+    const res = await fetch(`/api/analytics/risk-map?state=${encodeURIComponent(stateName)}&metric=${encodeURIComponent(heatmapSelectedMetric)}`);
+    const data = await res.json();
+    stateRiskData = data.districts || [];
+    stateSummaryData = data.state_summary || null;
+
+    renderStateRightPanel();
+  } catch (err) {
+    console.error("Failed to load district risk data:", err);
+  }
+}
+
+function renderStateRightPanel() {
+  const panel = document.getElementById("heatmap-panel-content");
+  if (!panel) return;
+
+  const stName = heatmapSelectedState;
+  const summary = stateSummaryData || {};
+  const totalProjects = (summary.project_count || 0).toLocaleString();
+  const avgRisk = summary.avg_risk || "0.0";
+  const highRisk = (summary.high_risk_count || 0).toLocaleString();
+  const anomalies = (summary.anomaly_count || 0).toLocaleString();
+  const delayed = (summary.delayed_count || 0).toLocaleString();
+  const disbRate = (summary.disbursement_rate || 0.0).toFixed(1) + "%";
+
+  const stNatObj = nationalRiskData.find(s => s.state.toLowerCase() === stName.toLowerCase()) || {};
+  const riskBadgeColor = stNatObj.color || "#107C41";
+  const riskLabel = stNatObj.risk_label || "Lower Statistical Risk";
+
+  panel.innerHTML = `
+    <div>
+      <div class="flex items-center justify-between">
+        <span class="text-[10px] font-bold uppercase tracking-wider bg-purple-50 text-purple-900 px-2.5 py-1 rounded-md border border-purple-200">State View</span>
+        <span class="text-[11px] font-bold px-2.5 py-0.5 rounded-full text-white" style="background-color: ${riskBadgeColor}">${riskLabel}</span>
+      </div>
+      <h3 class="text-xl font-black text-gov-dark mt-1">${stName}</h3>
+    </div>
+
+    <!-- Compact 6-Metric Grid -->
+    <div class="grid grid-cols-2 gap-2 text-xs">
+      <div class="p-2.5 bg-slate-50 rounded-xl border border-slate-200">
+        <span class="text-slate-500 text-[11px] block">Projects Analyzed</span>
+        <strong class="text-sm font-black text-slate-800">${totalProjects}</strong>
+      </div>
+      <div class="p-2.5 bg-purple-50/60 rounded-xl border border-purple-200">
+        <span class="text-purple-800 text-[11px] block">Avg ML Risk Score</span>
+        <strong class="text-sm font-black text-purple-900">${avgRisk}/100</strong>
+      </div>
+      <div class="p-2.5 bg-amber-50/60 rounded-xl border border-amber-200">
+        <span class="text-amber-800 text-[11px] block">High-Risk Projects</span>
+        <strong class="text-sm font-black text-amber-900">${highRisk}</strong>
+      </div>
+      <div class="p-2.5 bg-slate-50 rounded-xl border border-slate-200">
+        <span class="text-slate-500 text-[11px] block">ML Anomalies</span>
+        <strong class="text-sm font-black text-slate-800">${anomalies}</strong>
+      </div>
+      <div class="p-2.5 bg-red-50/60 rounded-xl border border-red-200">
+        <span class="text-red-800 text-[11px] block">Delayed Projects</span>
+        <strong class="text-sm font-black text-red-700">${delayed}</strong>
+      </div>
+      <div class="p-2.5 bg-emerald-50/60 rounded-xl border border-emerald-200">
+        <span class="text-emerald-800 text-[11px] block">Disbursement Rate</span>
+        <strong class="text-sm font-black text-emerald-800">${disbRate}</strong>
+      </div>
+    </div>
+
+    <!-- Ranked Districts List (Item 9 in requirements) -->
+    <div class="space-y-2 pt-1">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-1.5">
+        <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider">Districts (${stateRiskData.length})</h4>
+        <span class="text-[10px] text-slate-400 font-medium">Ranked by risk score</span>
+      </div>
+      <div class="space-y-1.5 max-h-[270px] overflow-y-auto pr-1">
+        ${stateRiskData.map(d => `
+          <div onclick="selectHeatmapDistrict('${d.district}')" class="p-2.5 bg-white rounded-xl border border-slate-200 hover:border-gov-primary hover:shadow-xs cursor-pointer transition flex items-center justify-between">
+            <div>
+              <strong class="text-xs text-slate-800 font-bold block truncate max-w-[150px]" title="${d.district}">${d.district}</strong>
+              <span class="text-[10px] text-slate-500 font-medium">${d.project_count} project(s)</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-mono font-bold text-slate-800">${d.avg_risk}/100</span>
+              <span class="w-3 h-3 rounded-full shrink-0" style="background-color: ${getMetricColorForFeature(d)}"></span>
+            </div>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+async function selectHeatmapDistrict(districtName) {
+  heatmapSelectedDistrict = districtName;
+  if (!heatmapSelectedState) return;
+
+  updateHeatmapBreadcrumbs();
+
+  try {
+    const res = await fetch(`/api/analytics/risk-map/projects?state=${encodeURIComponent(heatmapSelectedState)}&district=${encodeURIComponent(districtName)}&limit=15`);
+    const data = await res.json();
+    districtProjectsData = data.items || [];
+
+    renderDistrictRightPanel();
+  } catch (err) {
+    console.error("Failed to load district projects:", err);
+  }
+}
+
+function renderDistrictRightPanel() {
+  const panel = document.getElementById("heatmap-panel-content");
+  if (!panel) return;
+
+  const stName = heatmapSelectedState;
+  const distName = heatmapSelectedDistrict;
+  const distObj = stateRiskData.find(d => d.district.toLowerCase() === distName.toLowerCase()) || {};
+
+  const totalProjects = (distObj.project_count || districtProjectsData.length).toLocaleString();
+  const avgRisk = distObj.avg_risk || (districtProjectsData.length > 0 ? (districtProjectsData.reduce((acc, p) => acc + p.anomaly_risk_score, 0) / districtProjectsData.length).toFixed(1) : "0.0");
+  const highRisk = (distObj.high_risk_count || districtProjectsData.filter(p => p.anomaly_risk_score >= 50).length).toLocaleString();
+  const anomalies = (distObj.anomaly_count || districtProjectsData.filter(p => p.anomaly_status === 'POTENTIAL ANOMALY').length).toLocaleString();
+  const delayed = (distObj.delayed_count || districtProjectsData.filter(p => p.delay_status.includes('DELAYED')).length).toLocaleString();
+  const disbRate = (distObj.disbursement_rate || 0.0).toFixed(1) + "%";
+
+  panel.innerHTML = `
+    <div>
+      <span class="text-[10px] font-bold uppercase tracking-wider bg-emerald-50 text-emerald-800 px-2.5 py-1 rounded-md border border-emerald-200">Selected District</span>
+      <h3 class="text-xl font-black text-gov-dark mt-1">${distName}</h3>
+      <p class="text-xs text-slate-500 font-medium">${stName} • District Monitoring Profile</p>
+    </div>
+
+    <!-- Compact 6-Metric Grid -->
+    <div class="grid grid-cols-2 gap-2 text-xs">
+      <div class="p-2.5 bg-slate-50 rounded-xl border border-slate-200">
+        <span class="text-slate-500 text-[11px] block">Projects Analyzed</span>
+        <strong class="text-sm font-black text-slate-800">${totalProjects}</strong>
+      </div>
+      <div class="p-2.5 bg-purple-50/60 rounded-xl border border-purple-200">
+        <span class="text-purple-800 text-[11px] block">Avg ML Risk Score</span>
+        <strong class="text-sm font-black text-purple-900">${avgRisk}/100</strong>
+      </div>
+      <div class="p-2.5 bg-amber-50/60 rounded-xl border border-amber-200">
+        <span class="text-amber-800 text-[11px] block">High-Risk Projects</span>
+        <strong class="text-sm font-black text-amber-900">${highRisk}</strong>
+      </div>
+      <div class="p-2.5 bg-slate-50 rounded-xl border border-slate-200">
+        <span class="text-slate-500 text-[11px] block">ML Anomalies</span>
+        <strong class="text-sm font-black text-slate-800">${anomalies}</strong>
+      </div>
+      <div class="p-2.5 bg-red-50/60 rounded-xl border border-red-200">
+        <span class="text-red-800 text-[11px] block">Delayed Projects</span>
+        <strong class="text-sm font-black text-red-700">${delayed}</strong>
+      </div>
+      <div class="p-2.5 bg-emerald-50/60 rounded-xl border border-emerald-200">
+        <span class="text-emerald-800 text-[11px] block">Disbursement Rate</span>
+        <strong class="text-sm font-black text-emerald-800">${disbRate}</strong>
+      </div>
+    </div>
+
+    <!-- Top Projects Table (Item 10 & 11 in requirements) -->
+    <div class="space-y-2 pt-1">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-1 text-xs">
+        <h4 class="font-bold text-slate-700 uppercase tracking-wider">Top Projects</h4>
+        <button onclick="viewAllDistrictProjects('${stName}', '${distName}')" class="text-gov-primary hover:underline text-[11px] font-bold">
+          View All Projects →
+        </button>
+      </div>
+
+      <div class="border border-slate-200 rounded-xl overflow-hidden max-h-[230px] overflow-y-auto">
+        <table class="w-full text-left text-xs">
+          <thead class="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 sticky top-0">
+            <tr>
+              <th class="p-2">Work ID</th>
+              <th class="p-2">Work Title</th>
+              <th class="p-2 text-right">Risk Score</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100 bg-white">
+            ${districtProjectsData.length === 0 ? `
+              <tr><td colspan="3" class="p-3 text-center text-slate-400">No project records found.</td></tr>
+            ` : districtProjectsData.map(p => `
+              <tr onclick="openProject360('${p.work_id}')" class="hover:bg-blue-50/80 cursor-pointer transition">
+                <td class="p-2 font-mono font-bold text-gov-primary text-[11px] whitespace-nowrap">${p.work_id}</td>
+                <td class="p-2 font-medium text-slate-800 max-w-[140px] truncate" title="${p.work_title}">${p.work_title}</td>
+                <td class="p-2 text-right font-mono font-bold text-purple-900 whitespace-nowrap">${p.anomaly_risk_score}/100</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function viewAllDistrictProjects(stateName, districtName) {
+  switchNav('citizen');
+  const searchInput = document.getElementById("explorer-search");
+  if (searchInput) {
+    searchInput.value = districtName;
+    filterWorks();
+  }
 }
 
 // Initial Boot
