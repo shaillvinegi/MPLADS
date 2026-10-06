@@ -1975,7 +1975,8 @@ async function renderIndiaStatesGeoJsonLayer() {
         const stData = nationalRiskData.find(s => normalizeStateName(s.state) === normGeoName);
         const isSelected = heatmapSelectedState && normalizeStateName(heatmapSelectedState) === normGeoName;
 
-        if (!stData || stData.project_count === 0) {
+        if (!stData || typeof stData.avg_risk !== "number" || isNaN(stData.avg_risk) || stData.project_count <= 0) {
+          console.log(`[Heatmap State Risk] State: "${rawStateName}" | Projects: 0 | Avg Risk: N/A | Color: #94A3B8 (LIGHT GRAY)`);
           return {
             fillColor: "#94A3B8",
             weight: isSelected ? 3 : 1.2,
@@ -1984,8 +1985,12 @@ async function renderIndiaStatesGeoJsonLayer() {
             fillOpacity: 0.35
           };
         }
+
+        const color = getMetricColorForFeature(stData);
+        console.log(`[Heatmap State Risk] State: "${stData.state}" | Projects: ${stData.project_count} | Avg Risk: ${stData.avg_risk} | Color: ${color}`);
+
         return {
-          fillColor: getMetricColorForFeature(stData),
+          fillColor: color,
           weight: isSelected ? 3.5 : 1.5,
           opacity: 1,
           color: isSelected ? "#0F4C81" : "#FFFFFF",
@@ -1997,7 +2002,7 @@ async function renderIndiaStatesGeoJsonLayer() {
         const normGeoName = normalizeStateName(rawStateName);
         const stData = nationalRiskData.find(s => normalizeStateName(s.state) === normGeoName);
 
-        if (stData) {
+        if (stData && typeof stData.avg_risk === "number" && !isNaN(stData.avg_risk) && stData.project_count > 0) {
           layer.bindTooltip(`
             <div class="p-2.5 space-y-1 font-sans text-xs bg-white text-slate-800 rounded-lg shadow-md border border-slate-200">
               <div class="font-black text-slate-900 text-sm border-b border-slate-200 pb-1 flex items-center justify-between gap-3">
@@ -2048,10 +2053,12 @@ async function renderIndiaStatesGeoJsonLayer() {
 }
 
 function getMetricColorForFeature(stData) {
-  if (!stData || stData.project_count === 0) return "#94A3B8";
+  if (!stData || typeof stData.avg_risk !== "number" || isNaN(stData.avg_risk) || stData.project_count <= 0) {
+    return "#94A3B8"; // LIGHT GRAY for missing/null/NaN data
+  }
 
   if (heatmapSelectedMetric === 'avg_risk') {
-    return stData.color || (stData.avg_risk >= 65 ? '#DC2626' : (stData.avg_risk >= 40 ? '#F58220' : '#107C41'));
+    return stData.color || (stData.avg_risk >= 23.0 ? '#DC2626' : (stData.avg_risk >= 18.0 ? '#F58220' : '#107C41'));
   } else if (heatmapSelectedMetric === 'high_risk_count') {
     return stData.high_risk_count >= 300 ? '#DC2626' : (stData.high_risk_count >= 100 ? '#F58220' : '#107C41');
   } else if (heatmapSelectedMetric === 'anomaly_rate') {

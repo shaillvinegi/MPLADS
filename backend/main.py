@@ -1703,11 +1703,11 @@ def get_analytics_risk_map(
             anom_rate = round((anom_cnt / cnt * 100), 1) if cnt > 0 else 0.0
             delay_rate = round((del_cnt / cnt * 100), 1) if cnt > 0 else 0.0
 
-            if avg_r < 40.0:
+            if avg_r < 20.0:
                 risk_level = "LOWER"
                 risk_label = "Lower Statistical Risk"
                 color = "#107C41"
-            elif avg_r < 65.0:
+            elif avg_r < 40.0:
                 risk_level = "MODERATE"
                 risk_label = "Moderate Statistical Risk"
                 color = "#F58220"
@@ -1793,11 +1793,11 @@ def get_analytics_risk_map(
             anom_rate = round((anom_cnt / cnt * 100), 1) if cnt > 0 else 0.0
             delay_rate = round((del_cnt / cnt * 100), 1) if cnt > 0 else 0.0
 
-            if avg_r < 40.0:
+            if avg_r < 18.0:
                 risk_level = "LOWER"
                 risk_label = "Lower Statistical Risk"
                 color = "#107C41"
-            elif avg_r < 65.0:
+            elif avg_r < 23.0:
                 risk_level = "MODERATE"
                 risk_label = "Moderate Statistical Risk"
                 color = "#F58220"
