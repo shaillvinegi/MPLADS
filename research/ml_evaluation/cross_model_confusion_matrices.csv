@@ -1,0 +1,7 @@
+Model_1 (Row),Model_2 (Col),Both_Normal,Model_1_Only_Anomaly,Model_2_Only_Anomaly,Both_Flagged_Anomaly,Jaccard_Agreement_Index
+Isolation Forest,Local Outlier Factor,7400,401,399,18,0.022
+Isolation Forest,One-Class SVM,7664,133,135,286,0.5162
+Isolation Forest,Elliptic Envelope,7563,274,236,145,0.2214
+Local Outlier Factor,One-Class SVM,7410,387,391,30,0.0371
+Local Outlier Factor,Elliptic Envelope,7450,387,351,30,0.0391
+One-Class SVM,Elliptic Envelope,7560,277,237,144,0.2188

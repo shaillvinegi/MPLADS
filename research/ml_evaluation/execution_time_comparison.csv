@@ -1,0 +1,5 @@
+Algorithm,Training Records,Evaluation Records,Fit Time (seconds),Scoring Time (seconds),Total Time (seconds),Throughput (records/sec)
+Isolation Forest,32868,8218,3.7626,0.5864,4.349,14015.1
+Local Outlier Factor,32868,8218,3.2934,1.1539,4.4473,7121.9
+One-Class SVM,32868,8218,9.2436,2.5286,11.7722,3250.0
+Elliptic Envelope,32868,8218,7.785,0.0028,7.7878,2897641.1

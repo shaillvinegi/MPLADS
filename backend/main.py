@@ -5,8 +5,11 @@ Serves API endpoints and static frontend for the MVP prototype.
 import os
 import sqlite3
 import datetime
-from typing import Optional, List
-from fastapi import FastAPI, Query, HTTPException, Depends
+import json
+import uuid
+from typing import Optional, List, Dict, Any
+from fastapi import FastAPI, Query, HTTPException, Depends, File, Form, UploadFile, Request, Response, status
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -18,6 +21,31 @@ from backend.database import (
     get_live_db,
     init_live_db
 )
+from backend.evidence_screening import run_evidence_screening
+from backend.security import (
+    hash_password,
+    verify_password,
+    check_rate_limit,
+    record_failed_login,
+    record_successful_login,
+    create_user_session,
+    invalidate_user_session,
+    get_session_user,
+    log_security_event,
+    extract_token_from_request,
+    get_current_user_optional,
+    get_current_user,
+    require_role,
+    enforce_mp_scope,
+    enforce_da_scope,
+    enforce_ia_scope,
+    SESSION_COOKIE_NAME,
+    SESSION_EXPIRY_HOURS,
+    SECURE_COOKIES
+)
+
+EVIDENCE_UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads", "evidence")
+os.makedirs(EVIDENCE_UPLOAD_DIR, exist_ok=True)
 
 app = FastAPI(
     title="Nirakshan MPLADS Platform",
@@ -34,10 +62,40 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Security Headers Middleware
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
+
 # Initialize live database tables and demo seed data on startup
 init_live_db()
 
 # --- Pydantic Request Models ---
+class LoginRequest(BaseModel):
+    username: str = Field(..., min_length=2, max_length=100)
+    password: str = Field(..., min_length=3, max_length=200)
+
+class CreateUserRequest(BaseModel):
+    username: str = Field(..., min_length=3, max_length=50)
+    password: str = Field(..., min_length=6, max_length=100)
+    full_name: str = Field(..., min_length=2, max_length=150)
+    email: str = Field(..., min_length=5, max_length=150)
+    role: str = Field(..., pattern="^(admin|mp|district_authority|implementing_agency|citizen)$")
+    state: Optional[str] = None
+    district: Optional[str] = None
+    constituency: Optional[str] = None
+    agency_id: Optional[int] = None
+    agency_name: Optional[str] = None
+    designation: Optional[str] = None
+
+class UpdateUserStatusRequest(BaseModel):
+    is_active: int = Field(..., ge=0, le=1)
+
 class RecommendWorkRequest(BaseModel):
     title: str = Field(..., min_length=3, max_length=250)
     description: Optional[str] = ""
@@ -49,7 +107,7 @@ class RecommendWorkRequest(BaseModel):
     priority: str = Field(default="Medium")
     beneficiary_purpose: Optional[str] = ""
     estimated_amount: float = Field(..., gt=0)
-    recommending_mp_name: str = Field(...)
+    recommending_mp_name: Optional[str] = None
     recommending_mp_id: Optional[int] = None
 
 class ReviewWorkRequest(BaseModel):
@@ -70,20 +128,281 @@ class UpdateProgressRequest(BaseModel):
     payment_notes: Optional[str] = ""
 
 
-# --- API Routes ---
+# --- Authentication & User Management Routes ---
+
+@app.post("/api/auth/login")
+def login(
+    req: LoginRequest,
+    request: Request,
+    response: Response,
+    db: sqlite3.Connection = Depends(get_live_db)
+):
+    """Authenticates stakeholder using Argon2id password verification and establishes secure session."""
+    client_ip = request.client.host if request.client else "unknown"
+    client_key = f"{client_ip}:{req.username.strip().lower()}"
+    
+    # 1. Rate limiting check against brute-force attacks
+    check_rate_limit(client_key)
+    
+    # 2. Query user by username (parameterized query)
+    cursor = db.cursor()
+    cursor.execute("""
+        SELECT id, username, password_hash, full_name, email, role,
+               state, district, constituency, agency_id, agency_name,
+               designation, is_active
+        FROM users
+        WHERE LOWER(username) = LOWER(?)
+    """, (req.username.strip(),))
+    row = cursor.fetchone()
+    
+    if not row:
+        record_failed_login(client_key)
+        log_security_event(
+            db, action="LOGIN_FAILED", status_code="401",
+            actor_username=req.username.strip(),
+            ip_address=client_ip, details="User account does not exist"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password."
+        )
+
+    user = dict(row)
+
+    # 3. Check account active status
+    if not user.get("is_active", 1):
+        record_failed_login(client_key)
+        log_security_event(
+            db, action="LOGIN_BLOCKED_INACTIVE", status_code="403",
+            actor_id=user["id"], actor_username=user["username"], actor_role=user["role"],
+            ip_address=client_ip, details="Attempted login on deactivated account"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account has been deactivated. Please contact the administrator."
+        )
+
+    # 4. Password verification using Argon2id
+    if not verify_password(user["password_hash"], req.password):
+        record_failed_login(client_key)
+        log_security_event(
+            db, action="LOGIN_FAILED_CREDENTIALS", status_code="401",
+            actor_id=user["id"], actor_username=user["username"], actor_role=user["role"],
+            ip_address=client_ip, details="Argon2id password verification failure"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password."
+        )
+
+    # 5. Clear failed attempts & create session
+    record_successful_login(client_key)
+    session = create_user_session(
+        db, user_id=user["id"], ip_address=client_ip,
+        user_agent=request.headers.get("user-agent")
+    )
+
+    # Update last login timestamp
+    cursor.execute("UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?", (user["id"],))
+    db.commit()
+
+    # Log security audit success
+    log_security_event(
+        db, action="LOGIN_SUCCESS", status_code="200",
+        actor_id=user["id"], actor_username=user["username"], actor_role=user["role"],
+        ip_address=client_ip, details=f"Stakeholder '{user['username']}' authenticated as '{user['role']}'"
+    )
+
+    # Set secure HTTP-only cookie
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=session["session_token"],
+        httponly=True,
+        samesite="lax",
+        secure=SECURE_COOKIES,
+        max_age=SESSION_EXPIRY_HOURS * 3600,
+        path="/"
+    )
+
+    safe_user = {k: v for k, v in user.items() if k != "password_hash"}
+    return {
+        "status": "success",
+        "message": "Login successful.",
+        "user": safe_user,
+        "session_token": session["session_token"],
+        "csrf_token": session["csrf_token"],
+        "expires_at": session["expires_at"]
+    }
+
+
+@app.post("/api/auth/logout")
+def logout(
+    request: Request,
+    response: Response,
+    db: sqlite3.Connection = Depends(get_live_db)
+):
+    """Revokes session and clears HTTP-only authentication cookie."""
+    token = extract_token_from_request(request)
+    client_ip = request.client.host if request.client else "unknown"
+    if token:
+        user = get_session_user(db, token)
+        invalidate_user_session(db, token)
+        if user:
+            log_security_event(
+                db, action="LOGOUT", status_code="200",
+                actor_id=user["id"], actor_username=user["username"], actor_role=user["role"],
+                ip_address=client_ip, details="Session terminated"
+            )
+    response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")
+    return {"status": "success", "message": "Successfully logged out."}
+
+
+@app.get("/api/auth/me")
+def get_current_user_profile(
+    current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)
+):
+    """Returns currently authenticated user profile or public citizen guest state."""
+    if current_user:
+        safe_user = {k: v for k, v in current_user.items() if k not in ("session_token", "password_hash")}
+        return {
+            "authenticated": True,
+            "user": safe_user,
+            "csrf_token": current_user.get("csrf_token")
+        }
+    return {
+        "authenticated": False,
+        "user": {
+            "id": None,
+            "username": "anonymous",
+            "full_name": "Public Citizen",
+            "role": "citizen",
+            "is_active": 1,
+            "state": "National",
+            "district": "National",
+            "constituency": "National",
+            "agency_id": None,
+            "agency_name": None,
+            "designation": "Citizen / Public Observer"
+        },
+        "csrf_token": None
+    }
+
+
+# --- Admin User & Security Audit Routes ---
+
+@app.get("/api/admin/users")
+def get_admin_users(
+    current_user: Dict[str, Any] = Depends(require_role("admin")),
+    db: sqlite3.Connection = Depends(get_live_db)
+):
+    """Admin: lists all system users with roles and status."""
+    cursor = db.cursor()
+    cursor.execute("""
+        SELECT id, username, full_name, email, role, state, district,
+               constituency, agency_id, agency_name, designation,
+               is_active, last_login_at, created_at
+        FROM users
+        ORDER BY id ASC
+    """)
+    return {"users": [dict(r) for r in cursor.fetchall()]}
+
+
+@app.post("/api/admin/users")
+def create_admin_user(
+    req: CreateUserRequest,
+    current_user: Dict[str, Any] = Depends(require_role("admin")),
+    db: sqlite3.Connection = Depends(get_live_db)
+):
+    """Admin: provisions a new stakeholder user with Argon2id hashed password."""
+    cursor = db.cursor()
+    cursor.execute("SELECT id FROM users WHERE LOWER(username) = LOWER(?)", (req.username.strip(),))
+    if cursor.fetchone():
+        raise HTTPException(status_code=400, detail=f"Username '{req.username}' already exists.")
+
+    hashed_pw = hash_password(req.password)
+    cursor.execute("""
+        INSERT INTO users (
+            username, password_hash, full_name, email, role,
+            state, district, constituency, agency_id, agency_name, designation, is_active
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+    """, (
+        req.username.strip(), hashed_pw, req.full_name.strip(), req.email.strip(), req.role,
+        req.state, req.district, req.constituency, req.agency_id, req.agency_name, req.designation
+    ))
+    db.commit()
+    new_user_id = cursor.lastrowid
+    log_security_event(
+        db, action="ADMIN_CREATE_USER", status_code="201",
+        actor_id=current_user["id"], actor_username=current_user["username"], actor_role=current_user["role"],
+        resource_type="user", resource_id=str(new_user_id), details=f"Created user '{req.username}' with role '{req.role}'"
+    )
+    return {"success": True, "message": f"User '{req.username}' created successfully.", "user_id": new_user_id}
+
+
+@app.patch("/api/admin/users/{user_id}/status")
+def update_user_status(
+    user_id: int,
+    req: UpdateUserStatusRequest,
+    current_user: Dict[str, Any] = Depends(require_role("admin")),
+    db: sqlite3.Connection = Depends(get_live_db)
+):
+    """Admin: activates or deactivates a user account."""
+    cursor = db.cursor()
+    cursor.execute("SELECT id, username, role FROM users WHERE id = ?", (user_id,))
+    target = cursor.fetchone()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found.")
+    
+    target_user = dict(target)
+    if target_user["id"] == current_user["id"] and req.is_active == 0:
+        raise HTTPException(status_code=400, detail="Administrators cannot deactivate their own account.")
+
+    cursor.execute("UPDATE users SET is_active = ? WHERE id = ?", (req.is_active, user_id))
+    # If deactivating user, invalidate their active sessions
+    if req.is_active == 0:
+        cursor.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+    db.commit()
+
+    log_security_event(
+        db, action="ADMIN_UPDATE_USER_STATUS", status_code="200",
+        actor_id=current_user["id"], actor_username=current_user["username"], actor_role=current_user["role"],
+        resource_type="user", resource_id=str(user_id),
+        details=f"Changed active status of '{target_user['username']}' to {req.is_active}"
+    )
+    return {"success": True, "message": f"User status updated to {'active' if req.is_active else 'inactive'}."}
+
+
+@app.get("/api/admin/security-logs")
+def get_security_audit_logs(
+    limit: int = Query(50, ge=1, le=200),
+    current_user: Dict[str, Any] = Depends(require_role("admin")),
+    db: sqlite3.Connection = Depends(get_live_db)
+):
+    """Admin: retrieves persistent security audit trail."""
+    cursor = db.cursor()
+    cursor.execute("""
+        SELECT id, actor_id, actor_username, actor_role, action,
+               resource_type, resource_id, status, ip_address, details, created_at
+        FROM security_audit_logs
+        ORDER BY id DESC
+        LIMIT ?
+    """, (limit,))
+    return {"logs": [dict(r) for r in cursor.fetchall()]}
+
 
 @app.get("/api/auth/roles")
 def get_demo_roles(db: sqlite3.Connection = Depends(get_live_db)):
     """Returns available stakeholder personas for testing the MVP."""
     cursor = db.cursor()
-    cursor.execute("SELECT id, username, full_name, email, role, state, district, constituency, agency_name, designation FROM users")
+    cursor.execute("SELECT id, username, full_name, email, role, state, district, constituency, agency_name, designation FROM users WHERE is_active = 1")
     users = [dict(row) for row in cursor.fetchall()]
     return {
         "roles": [
             {"key": "citizen", "label": "Citizen / Public — Demo User", "description": "Public Read-Only Transparency Access"},
             {"key": "mp", "label": "MP Portal — Demo User", "description": "Recommend & Track Constituency Works"},
             {"key": "district_authority", "label": "District Authority — Demo User", "description": "Review, Sanction & Monitor Works"},
-            {"key": "implementing_agency", "label": "Implementing Agency — Demo User", "description": "Execute & Update Physical/Financial Progress"}
+            {"key": "implementing_agency", "label": "Implementing Agency — Demo User", "description": "Execute & Update Physical/Financial Progress"},
+            {"key": "admin", "label": "System Administrator", "description": "National Security & Portal Administration"}
         ],
         "demo_users": users
     }
@@ -473,6 +792,23 @@ def get_work_detail(
         l_cur.execute("SELECT * FROM audit_logs WHERE work_id = ? ORDER BY created_at DESC", (work_id,))
         logs = [dict(r) for r in l_cur.fetchall()]
 
+        # Fetch project evidence
+        l_cur.execute("SELECT * FROM project_evidence WHERE work_id = ? ORDER BY id DESC", (work_id,))
+        ev_items = [dict(r) for r in l_cur.fetchall()]
+        for item in ev_items:
+            if item.get("screening_results") and isinstance(item["screening_results"], str):
+                try:
+                    item["screening_results"] = json.loads(item["screening_results"])
+                except Exception:
+                    pass
+
+        ev_summary = {
+            "total": len(ev_items),
+            "verified": sum(1 for i in ev_items if i.get("verification_status") == "VERIFIED"),
+            "pending": sum(1 for i in ev_items if i.get("verification_status") == "PENDING_VERIFICATION"),
+            "rejected": sum(1 for i in ev_items if i.get("verification_status") == "REJECTED")
+        }
+
         sanction_amt = d["sanction_amount"] or 0.0
         disb_amt = d["total_disbursed"] or 0.0
 
@@ -527,7 +863,9 @@ def get_work_detail(
             "progress_updates": updates,
             "audit_trail": logs,
             "monitoring": monitoring_data,
-            "alerts": alerts_list
+            "alerts": alerts_list,
+            "evidence": ev_items,
+            "evidence_summary": ev_summary
         }
 
     # Check historical works
@@ -638,6 +976,23 @@ def get_work_detail(
                 "created_at": hd["completion_date"]
             })
 
+        # Fetch project evidence for historical works
+        l_cur.execute("SELECT * FROM project_evidence WHERE work_id = ? ORDER BY id DESC", (work_id,))
+        hev_items = [dict(r) for r in l_cur.fetchall()]
+        for item in hev_items:
+            if item.get("screening_results") and isinstance(item["screening_results"], str):
+                try:
+                    item["screening_results"] = json.loads(item["screening_results"])
+                except Exception:
+                    pass
+
+        hev_summary = {
+            "total": len(hev_items),
+            "verified": sum(1 for i in hev_items if i.get("verification_status") == "VERIFIED"),
+            "pending": sum(1 for i in hev_items if i.get("verification_status") == "PENDING_VERIFICATION"),
+            "rejected": sum(1 for i in hev_items if i.get("verification_status") == "REJECTED")
+        }
+
         return {
             "work": {
                 "work_id": hd["work_id"],
@@ -666,7 +1021,9 @@ def get_work_detail(
             "progress_updates": [],
             "audit_trail": audit_trail,
             "monitoring": monitoring_data,
-            "alerts": alerts_list
+            "alerts": alerts_list,
+            "evidence": hev_items,
+            "evidence_summary": hev_summary
         }
 
     raise HTTPException(status_code=404, detail=f"Work with ID '{work_id}' not found.")
@@ -679,6 +1036,7 @@ def get_work_detail(
 @app.get("/api/mp/dashboard")
 def get_mp_dashboard(
     mp_name: Optional[str] = Query(None),
+    current_user: Dict[str, Any] = Depends(require_role("mp", "admin")),
     h_db: sqlite3.Connection = Depends(get_historical_db),
     l_db: sqlite3.Connection = Depends(get_live_db)
 ):
@@ -686,8 +1044,12 @@ def get_mp_dashboard(
     h_cur = h_db.cursor()
     l_cur = l_db.cursor()
 
-    # If no MP is provided, dynamically select the first distinct MP from the real historical dataset
-    if not mp_name or not mp_name.strip():
+    # Scope validation: if role is 'mp', lock to current_user's identity and prevent unauthorized inspection
+    if current_user["role"] == "mp":
+        enforce_mp_scope(current_user, mp_name)
+        mp_name = current_user.get("full_name") or current_user.get("username")
+    elif not mp_name or not mp_name.strip():
+        # If admin without specified MP, dynamically select first distinct MP from historical dataset
         h_cur.execute("SELECT mp_name FROM historical_projects WHERE mp_name IS NOT NULL AND TRIM(mp_name) != '' ORDER BY mp_name ASC LIMIT 1")
         row = h_cur.fetchone()
         mp_name = row[0] if row else "Demo MP"
@@ -754,13 +1116,21 @@ def get_mp_dashboard(
 @app.post("/api/mp/recommend")
 def recommend_work(
     req: RecommendWorkRequest,
+    current_user: Dict[str, Any] = Depends(require_role("mp", "admin")),
     l_db: sqlite3.Connection = Depends(get_live_db)
 ):
-    """MP submits a new development work recommendation."""
+    """MP submits a new development work recommendation with server-side identity binding."""
     l_cur = l_db.cursor()
     now_str = datetime.datetime.now().strftime("%Y-%m-%d")
     current_year = datetime.datetime.now().year
     year_str = f"{current_year}-{current_year + 1}"
+
+    # Server-side identity & jurisdiction binding
+    mp_name = current_user["full_name"] if current_user["role"] == "mp" else (req.recommending_mp_name or current_user["full_name"])
+    mp_id = current_user["id"]
+    state = current_user["state"] if (current_user["role"] == "mp" and current_user.get("state")) else req.state
+    district = current_user["district"] if (current_user["role"] == "mp" and current_user.get("district")) else req.district
+    constituency = current_user["constituency"] if (current_user["role"] == "mp" and current_user.get("constituency")) else req.constituency
 
     # Generate sequential unique work_id for live works
     l_cur.execute("SELECT COUNT(*) FROM live_works")
@@ -775,25 +1145,31 @@ def recommend_work(
             recommending_mp_name, recommended_date, physical_progress_pct, current_milestone
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.0, 'RECOMMENDED', ?, ?, ?, 0, 'Planning')
     """, (
-        work_id, req.title, req.description, req.work_category, req.state, req.district,
-        f"{req.district.upper()}(DISTRICT MAGISTRATE {req.district.upper()}_IDA)",
-        req.constituency, req.location, req.priority, req.beneficiary_purpose,
-        req.estimated_amount, req.recommending_mp_id, req.recommending_mp_name, now_str
+        work_id, req.title, req.description, req.work_category, state, district,
+        f"{district.upper()}(DISTRICT MAGISTRATE {district.upper()}_IDA)",
+        constituency, req.location, req.priority, req.beneficiary_purpose,
+        req.estimated_amount, mp_id, mp_name, now_str
     ))
 
     # Insert audit entry
     l_cur.execute("""
-        INSERT INTO audit_logs (work_id, actor_name, actor_role, action, old_status, new_status, comments)
-        VALUES (?, ?, 'Member of Parliament', 'RECOMMENDED_WORK', NULL, 'RECOMMENDED', ?)
-    """, (work_id, req.recommending_mp_name, f"Work recommended with estimated outlay of ₹{req.estimated_amount:,.2f}"))
+        INSERT INTO audit_logs (work_id, actor_id, actor_name, actor_role, action, old_status, new_status, comments)
+        VALUES (?, ?, ?, 'Member of Parliament', 'RECOMMENDED_WORK', NULL, 'RECOMMENDED', ?)
+    """, (work_id, current_user["id"], mp_name, f"Work recommended with estimated outlay of ₹{req.estimated_amount:,.2f}"))
 
     # Create notification for District Authority
     l_cur.execute("""
         INSERT INTO notifications (target_role, title, message, work_id)
         VALUES ('district_authority', 'New Work Recommendation', ?, ?)
-    """, (f"MP {req.recommending_mp_name} recommended new work: '{req.title}'", work_id))
+    """, (f"MP {mp_name} recommended new work: '{req.title}'", work_id))
 
     l_db.commit()
+
+    log_security_event(
+        l_db, action="WORK_RECOMMENDED", status_code="201",
+        actor_id=current_user["id"], actor_username=current_user["username"], actor_role=current_user["role"],
+        resource_type="work", resource_id=work_id, details=f"MP recommended work '{work_id}' with outlay ₹{req.estimated_amount}"
+    )
 
     return {
         "success": True,
@@ -858,10 +1234,11 @@ def get_constituencies_metadata(
 def get_da_dashboard(
     state: Optional[str] = Query(None),
     district: Optional[str] = Query(None),
+    current_user: Dict[str, Any] = Depends(require_role("district_authority", "admin")),
     h_db: sqlite3.Connection = Depends(get_historical_db),
     l_db: sqlite3.Connection = Depends(get_live_db)
 ):
-    """District Authority dashboard: pending recommendations and district works with full state/district filtering."""
+    """District Authority dashboard: scoped to jurisdiction with mandatory district access control."""
     h_cur = h_db.cursor()
     l_cur = l_db.cursor()
 
@@ -871,8 +1248,17 @@ def get_da_dashboard(
         v = val.strip().lower()
         return v != "" and not v.startswith("all")
 
-    # Default to Agar-Malwa / Madhya Pradesh ONLY if query parameters are completely omitted (None)
-    if state is None and district is None:
+    # Scope enforcement: District Authority users are locked to their assigned district & state
+    if current_user["role"] == "district_authority":
+        user_state = current_user.get("state") or "Madhya Pradesh"
+        user_district = current_user.get("district") or "Agar-Malwa"
+        # If user queries a specific state/district, enforce that it matches their assigned jurisdiction
+        if is_valid_filter(state) or is_valid_filter(district):
+            enforce_da_scope(current_user, state or user_state, district or user_district)
+        state = user_state
+        district = user_district
+    elif state is None and district is None:
+        # Default for admin when not specified
         state = "Madhya Pradesh"
         district = "Agar-Malwa"
 
@@ -974,9 +1360,10 @@ def get_da_dashboard(
 @app.post("/api/da/review")
 def review_work(
     req: ReviewWorkRequest,
+    current_user: Dict[str, Any] = Depends(require_role("district_authority", "admin")),
     l_db: sqlite3.Connection = Depends(get_live_db)
 ):
-    """District Authority approves or returns a work recommendation."""
+    """District Authority approves or returns a work recommendation with jurisdiction enforcement."""
     l_cur = l_db.cursor()
     l_cur.execute("SELECT * FROM live_works WHERE work_id = ?", (req.work_id,))
     work = l_cur.fetchone()
@@ -985,8 +1372,13 @@ def review_work(
         raise HTTPException(status_code=404, detail="Work not found.")
 
     work = dict(work)
+
+    # Data-level scope enforcement: DA can only act on works within their assigned district
+    enforce_da_scope(current_user, work["state"], work["district"])
+
     old_status = work["status"]
     now_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    reviewer_name = current_user.get("full_name") or current_user.get("username")
 
     if req.action == "APPROVE":
         new_status = "APPROVED"
@@ -1041,11 +1433,18 @@ def review_work(
 
     # Audit Trail
     l_cur.execute("""
-        INSERT INTO audit_logs (work_id, actor_name, actor_role, action, old_status, new_status, comments)
-        VALUES (?, 'District Authority', 'District Authority', ?, ?, ?, ?)
-    """, (req.work_id, f"DA_{req.action}", old_status, new_status, action_desc))
+        INSERT INTO audit_logs (work_id, actor_id, actor_name, actor_role, action, old_status, new_status, comments)
+        VALUES (?, ?, ?, 'District Authority', ?, ?, ?, ?)
+    """, (req.work_id, current_user["id"], reviewer_name, f"DA_{req.action}", old_status, new_status, action_desc))
 
     l_db.commit()
+
+    log_security_event(
+        l_db, action=f"DA_WORK_{req.action}", status_code="200",
+        actor_id=current_user["id"], actor_username=current_user["username"], actor_role=current_user["role"],
+        resource_type="work", resource_id=req.work_id,
+        details=f"DA {req.action} work {req.work_id} in {work['district']}, {work['state']}"
+    )
 
     return {
         "success": True,
@@ -1059,15 +1458,35 @@ def review_work(
 
 @app.get("/api/agency/dashboard")
 def get_agency_dashboard(
+    current_user: Dict[str, Any] = Depends(require_role("implementing_agency", "admin")),
     l_db: sqlite3.Connection = Depends(get_live_db)
 ):
-    """Implementing Agency dashboard: assigned works and milestone tracking."""
+    """Implementing Agency dashboard: displays works scoped strictly to the assigned agency."""
     l_cur = l_db.cursor()
-    l_cur.execute("""
-        SELECT * FROM live_works 
-        WHERE status IN ('APPROVED', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED')
-        ORDER BY id DESC
-    """)
+
+    if current_user["role"] == "implementing_agency":
+        user_agency_name = current_user.get("agency_name") or ""
+        user_agency_id = current_user.get("agency_id")
+        user_id = current_user.get("id")
+
+        l_cur.execute("""
+            SELECT * FROM live_works 
+            WHERE status IN ('APPROVED', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED')
+              AND (
+                  assigned_agency_id = ?
+                  OR assigned_agency_id = ?
+                  OR LOWER(assigned_agency_name) = LOWER(?)
+              )
+            ORDER BY id DESC
+        """, (user_agency_id, user_id, user_agency_name))
+    else:
+        # Admin can view all assigned agency works
+        l_cur.execute("""
+            SELECT * FROM live_works 
+            WHERE status IN ('APPROVED', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED')
+            ORDER BY id DESC
+        """)
+
     assigned_works = [dict(r) for r in l_cur.fetchall()]
 
     in_progress = sum(1 for w in assigned_works if w["status"] == "IN_PROGRESS")
@@ -1088,9 +1507,10 @@ def get_agency_dashboard(
 @app.post("/api/agency/update-progress")
 def update_agency_progress(
     req: UpdateProgressRequest,
+    current_user: Dict[str, Any] = Depends(require_role("implementing_agency", "admin")),
     l_db: sqlite3.Connection = Depends(get_live_db)
 ):
-    """Agency submits physical progress, status change, and expenditure."""
+    """Agency submits physical progress, status change, and expenditure with agency ownership validation."""
     l_cur = l_db.cursor()
     l_cur.execute("SELECT * FROM live_works WHERE work_id = ?", (req.work_id,))
     work = l_cur.fetchone()
@@ -1099,8 +1519,13 @@ def update_agency_progress(
         raise HTTPException(status_code=404, detail="Work not found.")
 
     work = dict(work)
+
+    # Data-level scope enforcement: agency can only update projects assigned to them
+    enforce_ia_scope(current_user, work.get("assigned_agency_id"), work.get("assigned_agency_name"))
+
     old_status = work["status"]
     now_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    actor_name = current_user.get("full_name") or current_user.get("username")
 
     new_total_disbursed = (work["total_disbursed"] or 0.0) + (req.expenditure_incurred or 0.0)
     completion_date = now_str if req.status == "COMPLETED" else work["completion_date"]
@@ -1143,10 +1568,10 @@ def update_agency_progress(
 
     # Audit entry
     l_cur.execute("""
-        INSERT INTO audit_logs (work_id, actor_name, actor_role, action, old_status, new_status, comments)
-        VALUES (?, ?, 'Implementing Agency', 'UPDATE_PROGRESS', ?, ?, ?)
+        INSERT INTO audit_logs (work_id, actor_id, actor_name, actor_role, action, old_status, new_status, comments)
+        VALUES (?, ?, ?, 'Implementing Agency', 'UPDATE_PROGRESS', ?, ?, ?)
     """, (
-        req.work_id, work["assigned_agency_name"] or "Agency Engineer",
+        req.work_id, current_user["id"], actor_name,
         old_status, req.status,
         f"Progress updated to {req.physical_progress_pct}% ({req.current_milestone}). Outlay: ₹{req.expenditure_incurred:,.2f}. Notes: {req.description}"
     ))
@@ -1164,6 +1589,13 @@ def update_agency_progress(
 
     l_db.commit()
 
+    log_security_event(
+        l_db, action="AGENCY_UPDATE_PROGRESS", status_code="200",
+        actor_id=current_user["id"], actor_username=current_user["username"], actor_role=current_user["role"],
+        resource_type="work", resource_id=req.work_id,
+        details=f"Agency updated work {req.work_id} to {req.physical_progress_pct}%"
+    )
+
     return {
         "success": True,
         "work_id": req.work_id,
@@ -1176,12 +1608,14 @@ def update_agency_progress(
 # --- PROJECT MONITORING & ML ANOMALY DETECTION ENDPOINTS ---
 
 from backend.monitoring_ml import init_monitoring_if_needed, run_monitoring_pipeline
+from backend.delay_prediction_ml import init_delay_prediction_if_needed, train_delay_model, get_model_status
 
 @app.on_event("startup")
 def startup_event():
     conn = sqlite3.connect(HISTORICAL_DB_PATH)
     try:
         init_monitoring_if_needed(conn)
+        init_delay_prediction_if_needed(conn)
     finally:
         conn.close()
 
@@ -1587,6 +2021,47 @@ def get_monitoring_alerts(
                 "anomaly_risk_score": r["anomaly_risk_score"]
             })
 
+    # 5. Early Warning: High Predicted Delay Risk for Ongoing Projects Approaching Deadline
+    try:
+        dp_cur = h_db.cursor()
+        dp_cur.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='project_delay_predictions'")
+        if dp_cur.fetchone():
+            dp_conditions = ["work_completion_status != 'COMPLETED'", "risk_level = 'HIGH'", "approaching_deadline = 1"]
+            dp_params = []
+            if is_valid_filter(state):
+                dp_conditions.append("state = ?")
+                dp_params.append(state.strip())
+            if is_valid_filter(district):
+                dp_conditions.append("district = ?")
+                dp_params.append(district.strip())
+            dp_where_sql = "WHERE " + " AND ".join(dp_conditions)
+            dp_cur.execute(f"""
+                SELECT work_id, state, district, work_title, predicted_delay_prob, days_to_deadline, delay_risk_score
+                FROM project_delay_predictions
+                {dp_where_sql}
+                ORDER BY predicted_delay_prob DESC, days_to_deadline ASC
+                LIMIT 25
+            """, dp_params)
+            for dr in dp_cur.fetchall():
+                alerts.append({
+                    "work_id": dr["work_id"],
+                    "state": dr["state"],
+                    "district": dr["district"],
+                    "work_title": dr["work_title"],
+                    "alert_type": "High Delay Risk Early Warning",
+                    "severity": "HIGH",
+                    "measured_value": f"Predicted Delay Probability: {round(dr['predicted_delay_prob']*100, 1)}% | Due in {dr['days_to_deadline']} days",
+                    "anomaly_risk_score": dr["delay_risk_score"]
+                })
+    except Exception:
+        pass
+
+    # Sort alerts: High delay early warnings and HIGH severity first, then by risk score descending
+    alerts.sort(key=lambda x: (
+        0 if x.get("alert_type") == "High Delay Risk Early Warning" else (1 if x.get("severity") == "HIGH" else 2),
+        -float(x.get("anomaly_risk_score") or 0.0)
+    ))
+
     return {"total_alerts": len(alerts), "alerts": alerts[:limit]}
 
 
@@ -1924,11 +2399,17 @@ def get_analytics_risk_map_projects(
 @app.post("/api/ml/retrain")
 def retrain_ml_model(
     contamination: float = Query(0.05, ge=0.01, le=0.2),
+    current_user: Dict[str, Any] = Depends(require_role("admin")),
     h_db: sqlite3.Connection = Depends(get_historical_db)
 ):
-    """Triggers ML Isolation Forest retraining with configurable contamination rate."""
+    """Triggers ML Isolation Forest retraining with admin-only authorization."""
     try:
         run_monitoring_pipeline(h_db, contamination=contamination)
+        log_security_event(
+            h_db, action="ML_RETRAIN", status_code="200",
+            actor_id=current_user["id"], actor_username=current_user["username"], actor_role=current_user["role"],
+            resource_type="ml_model", details=f"Retrained Isolation Forest with contamination={contamination}"
+        )
         return {
             "success": True,
             "message": f"ML Isolation Forest successfully retrained with contamination rate = {contamination}.",
@@ -1936,6 +2417,667 @@ def retrain_ml_model(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"ML retraining failed: {str(e)}")
+
+
+# --- AI-POWERED DELAY PREDICTION & EARLY WARNING ENDPOINTS ---
+
+@app.get("/api/delay-prediction/readiness")
+def get_delay_model_readiness(
+    h_db: sqlite3.Connection = Depends(get_historical_db)
+):
+    """Returns model operational readiness and data eligibility audit."""
+    try:
+        status = get_model_status(h_db)
+        return status
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to check delay model readiness: {str(e)}")
+
+
+@app.get("/api/delay-prediction/metrics")
+def get_delay_model_metrics(
+    h_db: sqlite3.Connection = Depends(get_historical_db)
+):
+    """Returns supervised Random Forest evaluation metrics, confusion matrix, and feature importances."""
+    status = get_model_status(h_db)
+    if not status.get("ready"):
+        return {
+            "ready": False,
+            "message": "Model is not ready. Train the model using the administrative retrain action.",
+            "data_eligibility": status.get("data_eligibility")
+        }
+    return status.get("manifest", {})
+
+
+@app.get("/api/delay-prediction/summary")
+def get_delay_prediction_summary(
+    state: Optional[str] = Query(None),
+    district: Optional[str] = Query(None),
+    h_db: sqlite3.Connection = Depends(get_historical_db)
+):
+    """Returns summary KPI card statistics for assessed projects, risk levels, and approaching deadlines."""
+    h_cur = h_db.cursor()
+    h_cur.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='project_delay_predictions'")
+    if not h_cur.fetchone():
+        return {
+            "ready": False,
+            "total_assessed": 0,
+            "high_risk_count": 0,
+            "medium_risk_count": 0,
+            "low_risk_count": 0,
+            "approaching_deadline_count": 0
+        }
+
+    conditions = []
+    params = []
+
+    def is_valid_filter(val):
+        if not val or not isinstance(val, str):
+            return False
+        v = val.strip().lower()
+        return v != "" and not v.startswith("all")
+
+    if is_valid_filter(state):
+        conditions.append("state = ?")
+        params.append(state.strip())
+    if is_valid_filter(district):
+        conditions.append("district = ?")
+        params.append(district.strip())
+
+    where_sql = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    h_cur.execute(f"""
+        SELECT
+            COUNT(*) as total_assessed,
+            SUM(CASE WHEN risk_level = 'HIGH' THEN 1 ELSE 0 END) as high_risk_count,
+            SUM(CASE WHEN risk_level = 'MEDIUM' THEN 1 ELSE 0 END) as medium_risk_count,
+            SUM(CASE WHEN risk_level = 'LOW' THEN 1 ELSE 0 END) as low_risk_count,
+            SUM(CASE WHEN approaching_deadline = 1 THEN 1 ELSE 0 END) as approaching_deadline_count,
+            SUM(CASE WHEN work_completion_status = 'COMPLETED' THEN 1 ELSE 0 END) as completed_training_count,
+            SUM(CASE WHEN work_completion_status != 'COMPLETED' THEN 1 ELSE 0 END) as ongoing_monitored_count
+        FROM project_delay_predictions
+        {where_sql}
+    """, params)
+
+    res = dict(h_cur.fetchone())
+    return {
+        "ready": True,
+        "total_assessed": res["total_assessed"] or 0,
+        "high_risk_count": res["high_risk_count"] or 0,
+        "medium_risk_count": res["medium_risk_count"] or 0,
+        "low_risk_count": res["low_risk_count"] or 0,
+        "approaching_deadline_count": res["approaching_deadline_count"] or 0,
+        "completed_training_count": res["completed_training_count"] or 0,
+        "ongoing_monitored_count": res["ongoing_monitored_count"] or 0
+    }
+
+
+@app.get("/api/delay-prediction/projects")
+def get_delay_prediction_projects(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    q: Optional[str] = Query(None),
+    state: Optional[str] = Query(None),
+    district: Optional[str] = Query(None),
+    constituency: Optional[str] = Query(None),
+    work_category: Optional[str] = Query(None),
+    risk_level: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    approaching_deadline: Optional[int] = Query(None),
+    h_db: sqlite3.Connection = Depends(get_historical_db)
+):
+    """Searchable & filterable project delay predictions table."""
+    h_cur = h_db.cursor()
+    h_cur.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='project_delay_predictions'")
+    if not h_cur.fetchone():
+        return {"items": [], "total": 0, "page": page, "total_pages": 1, "ready": False}
+
+    conditions = []
+    params = []
+
+    def is_valid_filter(val):
+        if not val or not isinstance(val, str):
+            return False
+        v = val.strip().lower()
+        return v != "" and not v.startswith("all")
+
+    if q and q.strip():
+        term = f"%{q.strip()}%"
+        conditions.append("(work_id LIKE ? OR work_title LIKE ? OR mp_name LIKE ? OR constituency LIKE ?)")
+        params.extend([term, term, term, term])
+
+    if is_valid_filter(state):
+        conditions.append("state = ?")
+        params.append(state.strip())
+
+    if is_valid_filter(district):
+        conditions.append("district = ?")
+        params.append(district.strip())
+
+    if is_valid_filter(constituency):
+        conditions.append("constituency = ?")
+        params.append(constituency.strip())
+
+    if is_valid_filter(work_category):
+        conditions.append("work_category = ?")
+        params.append(work_category.strip())
+
+    if is_valid_filter(risk_level):
+        conditions.append("risk_level = ?")
+        params.append(risk_level.strip().upper())
+
+    if is_valid_filter(status):
+        st = status.strip().upper()
+        if st == "COMPLETED":
+            conditions.append("work_completion_status = 'COMPLETED'")
+        elif st in ("ONGOING", "IN_PROGRESS", "NOT_COMPLETED"):
+            conditions.append("work_completion_status != 'COMPLETED'")
+        else:
+            conditions.append("(work_completion_status = ? OR execution_status = ?)")
+            params.extend([st, st])
+
+    if approaching_deadline is not None:
+        conditions.append("approaching_deadline = ?")
+        params.append(int(approaching_deadline))
+
+    where_sql = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    # Total matching records
+    h_cur.execute(f"SELECT COUNT(*) FROM project_delay_predictions {where_sql}", params)
+    total_records = h_cur.fetchone()[0]
+    total_pages = max(1, (total_records + limit - 1) // limit)
+
+    offset = (page - 1) * limit
+    h_cur.execute(f"""
+        SELECT work_id, work_title, state, district, constituency, mp_name,
+               work_category, sanction_date, expected_completion_date, completion_date,
+               execution_status, work_completion_status, sanction_amount,
+               early_disbursed_amount, early_disbursement_ratio, sanction_lead_time_days,
+               predicted_delay_prob, delay_risk_score, risk_level, days_to_deadline,
+               approaching_deadline, contributing_factors, was_delayed
+        FROM project_delay_predictions
+        {where_sql}
+        ORDER BY predicted_delay_prob DESC, sanction_amount DESC
+        LIMIT ? OFFSET ?
+    """, params + [limit, offset])
+
+    items = [dict(r) for r in h_cur.fetchall()]
+
+    return {
+        "ready": True,
+        "items": items,
+        "total": total_records,
+        "page": page,
+        "limit": limit,
+        "total_pages": total_pages
+    }
+
+
+@app.get("/api/delay-prediction/project/{work_id:path}")
+def get_project_delay_detail(
+    work_id: str,
+    h_db: sqlite3.Connection = Depends(get_historical_db)
+):
+    """Returns comprehensive delay prediction inspection detail for a single project."""
+    h_cur = h_db.cursor()
+    h_cur.execute("""
+        SELECT * FROM project_delay_predictions WHERE work_id = ?
+    """, (work_id.strip(),))
+    row = h_cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"No delay prediction record found for Work ID: '{work_id}'.")
+
+    p = dict(row)
+
+    # Fetch recorded payment events
+    h_cur.execute("""
+        SELECT rowid as payment_event_id, source_serial_number, expenditure_date,
+               reported_fund_disbursed_amount, payment_status, vendor_name_normalized
+        FROM historical_payment_events
+        WHERE work_id = ?
+        ORDER BY expenditure_date ASC
+    """, (work_id.strip(),))
+    payments = [dict(r) for r in h_cur.fetchall()]
+
+    return {
+        "work_id": p["work_id"],
+        "metadata": {
+            "work_title": p["work_title"],
+            "state": p["state"],
+            "district": p["district"],
+            "constituency": p["constituency"],
+            "mp_name": p["mp_name"],
+            "work_category": p["work_category"],
+            "execution_status": p["execution_status"],
+            "work_completion_status": p["work_completion_status"]
+        },
+        "timeline": {
+            "sanction_date": p["sanction_date"],
+            "expected_completion_date": p["expected_completion_date"],
+            "completion_date": p["completion_date"],
+            "days_to_deadline": p["days_to_deadline"],
+            "approaching_deadline": bool(p["approaching_deadline"]),
+            "was_delayed_actual": p["was_delayed"]
+        },
+        "financials": {
+            "sanction_amount": p["sanction_amount"],
+            "early_disbursed_amount": p["early_disbursed_amount"],
+            "early_disbursement_ratio_pct": round(p["early_disbursement_ratio"] * 100, 2),
+            "sanction_lead_time_days": p["sanction_lead_time_days"]
+        },
+        "prediction": {
+            "predicted_delay_prob": p["predicted_delay_prob"],
+            "delay_risk_score": p["delay_risk_score"],
+            "risk_level": p["risk_level"],
+            "contributing_factors": p["contributing_factors"]
+        },
+        "payments": payments,
+        "disclaimer": (
+            "The predicted delay probability represents the statistical likelihood that this project will exceed its "
+            "statutory 1-year completion deadline based on historical patterns of sanction outlay, early disbursement, "
+            "and approval lead times. It is a monitoring prioritization signal, not proof of negligence, corruption, or wrongdoing."
+        )
+    }
+
+
+@app.post("/api/delay-prediction/retrain")
+def retrain_delay_prediction_model(
+    current_user: Dict[str, Any] = Depends(require_role("admin")),
+    h_db: sqlite3.Connection = Depends(get_historical_db),
+    l_db: sqlite3.Connection = Depends(get_live_db)
+):
+    """Retrains the supervised Random Forest delay prediction model (Admin-only)."""
+    try:
+        manifest = train_delay_model(h_db)
+        log_security_event(
+            l_db, action="DELAY_MODEL_RETRAIN", status_code="200",
+            actor_id=current_user["id"], actor_username=current_user["username"], actor_role=current_user["role"],
+            resource_type="delay_model", details=f"Retrained Random Forest: accuracy={manifest['metrics']['accuracy']}, roc_auc={manifest['metrics']['roc_auc']}"
+        )
+        return {
+            "success": True,
+            "message": "Supervised Random Forest Delay Prediction model retrained successfully.",
+            "metrics": manifest["metrics"],
+            "training_records": manifest["training_records"]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Delay model retraining failed: {str(e)}")
+
+
+# --- Evidence & Verification Workflow Endpoints ---
+
+@app.get("/api/projects/{work_id:path}/evidence")
+def get_project_evidence(
+    work_id: str,
+    l_db: sqlite3.Connection = Depends(get_live_db)
+):
+    """Fetches evidence history and screening metrics for a project (public transparency)."""
+    l_cur = l_db.cursor()
+    l_cur.execute("SELECT * FROM project_evidence WHERE work_id = ? ORDER BY id DESC", (work_id,))
+    items = [dict(r) for r in l_cur.fetchall()]
+
+    for item in items:
+        if item.get("screening_results") and isinstance(item["screening_results"], str):
+            try:
+                item["screening_results"] = json.loads(item["screening_results"])
+            except Exception:
+                pass
+
+    summary = {
+        "total": len(items),
+        "verified": sum(1 for i in items if i.get("verification_status") == "VERIFIED"),
+        "pending": sum(1 for i in items if i.get("verification_status") == "PENDING_VERIFICATION"),
+        "rejected": sum(1 for i in items if i.get("verification_status") == "REJECTED")
+    }
+
+    return {
+        "work_id": work_id,
+        "summary": summary,
+        "evidence": items
+    }
+
+
+@app.post("/api/projects/{work_id:path}/evidence")
+async def submit_project_evidence(
+    work_id: str,
+    evidence_type: str = Form(...),
+    milestone: Optional[str] = Form("Planning"),
+    description: Optional[str] = Form(""),
+    resubmit_of_id: Optional[int] = Form(None),
+    file: UploadFile = File(...),
+    current_user: Dict[str, Any] = Depends(require_role("implementing_agency", "admin")),
+    l_db: sqlite3.Connection = Depends(get_live_db),
+    h_db: sqlite3.Connection = Depends(get_historical_db)
+):
+    """Submits new evidence or resubmission for a project with automated screening and agency ownership enforcement."""
+    filename = file.filename or "evidence_file.jpg"
+    ext = os.path.splitext(filename)[1].lower()
+    allowed_exts = [".jpg", ".jpeg", ".png", ".pdf"]
+    if ext not in allowed_exts:
+        raise HTTPException(status_code=400, detail=f"File extension '{ext}' is not supported. Allowed extensions: {', '.join(allowed_exts)}")
+
+    file_bytes = await file.read()
+    if len(file_bytes) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File size exceeds maximum 10MB limit.")
+
+    # Fetch work details for screening checks & agency ownership verification
+    l_cur = l_db.cursor()
+    l_cur.execute("SELECT * FROM live_works WHERE work_id = ?", (work_id,))
+    work_row = l_cur.fetchone()
+
+    work_data = {}
+    if work_row:
+        work_data = dict(work_row)
+        # Data-level scope enforcement: ensure agency is assigned to this project
+        enforce_ia_scope(current_user, work_data.get("assigned_agency_id"), work_data.get("assigned_agency_name"))
+    else:
+        h_cur = h_db.cursor()
+        h_cur.execute("SELECT * FROM historical_projects WHERE work_id = ?", (work_id,))
+        h_row = h_cur.fetchone()
+        if h_row:
+            work_data = dict(h_row)
+
+    stored_filename = f"ev_{uuid.uuid4().hex}_{os.path.basename(filename)}"
+    file_path = os.path.join(EVIDENCE_UPLOAD_DIR, stored_filename)
+
+    with open(file_path, "wb") as f:
+        f.write(file_bytes)
+
+    # Fetch existing hashes for duplicate check
+    l_cur.execute("SELECT file_hash FROM project_evidence WHERE file_hash IS NOT NULL")
+    existing_hashes = [r[0] for r in l_cur.fetchall() if r[0]]
+
+    screening_dict = run_evidence_screening(file_bytes, filename, work_data, existing_hashes)
+    screening_json = json.dumps(screening_dict)
+
+    resub_count = 0
+    prev_id = None
+    if resubmit_of_id:
+        l_cur.execute("SELECT * FROM project_evidence WHERE id = ?", (resubmit_of_id,))
+        prev_row = l_cur.fetchone()
+        if prev_row:
+            prev_data = dict(prev_row)
+            resub_count = (prev_data.get("resubmission_count") or 0) + 1
+            prev_id = prev_data["id"]
+
+    mime_type = file.content_type or ("application/pdf" if ext == ".pdf" else "image/jpeg")
+    submitted_by = current_user.get("username") or "agency"
+    submitted_by_name = current_user.get("full_name") or current_user.get("agency_name") or "Implementing Agency"
+
+    l_cur.execute("""
+        INSERT INTO project_evidence (
+            work_id, evidence_type, milestone, file_name, stored_file_name,
+            file_path, file_size, mime_type, description, submitted_by,
+            submitted_by_name, verification_status, resubmission_count,
+            previous_evidence_id, file_hash, screening_results
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_VERIFICATION', ?, ?, ?, ?)
+    """, (
+        work_id, evidence_type, milestone or "Planning", filename, stored_filename,
+        file_path, len(file_bytes), mime_type, description, submitted_by,
+        submitted_by_name, resub_count, prev_id, screening_dict["file_hash"], screening_json
+    ))
+
+    evidence_id = l_cur.lastrowid
+
+    action_name = "EVIDENCE_RESUBMITTED" if prev_id else "EVIDENCE_SUBMITTED"
+    action_desc = f"Submitted {evidence_type} ({milestone or 'N/A'}) for verification." + (f" [Resubmission #{resub_count}]" if prev_id else "")
+
+    l_cur.execute("""
+        INSERT INTO audit_logs (work_id, actor_id, actor_name, actor_role, action, old_status, new_status, comments)
+        VALUES (?, ?, ?, 'Implementing Agency', ?, 'SUBMITTED', 'PENDING_VERIFICATION', ?)
+    """, (work_id, current_user["id"], submitted_by_name, action_name, action_desc))
+
+    l_cur.execute("""
+        INSERT INTO notifications (target_role, title, message, work_id)
+        VALUES ('district_authority', 'New Evidence Submitted', ?, ?)
+    """, (f"Evidence ({evidence_type}) submitted for work '{work_data.get('title', work_id)}'.", work_id))
+
+    l_db.commit()
+
+    log_security_event(
+        l_db, action=action_name, status_code="201",
+        actor_id=current_user["id"], actor_username=current_user["username"], actor_role=current_user["role"],
+        resource_type="evidence", resource_id=str(evidence_id),
+        details=f"Agency submitted evidence for {work_id}"
+    )
+
+    return {
+        "success": True,
+        "message": "Evidence submitted successfully and queued for District Authority verification.",
+        "evidence_id": evidence_id,
+        "work_id": work_id,
+        "verification_status": "PENDING_VERIFICATION",
+        "screening": screening_dict
+    }
+
+
+@app.post("/api/evidence/{evidence_id}/verify")
+def verify_evidence(
+    evidence_id: int,
+    comments: Optional[str] = Form(""),
+    current_user: Dict[str, Any] = Depends(require_role("district_authority", "admin")),
+    l_db: sqlite3.Connection = Depends(get_live_db)
+):
+    """District Authority verifies evidence submission with jurisdiction check."""
+    l_cur = l_db.cursor()
+    l_cur.execute("SELECT * FROM project_evidence WHERE id = ?", (evidence_id,))
+    ev_row = l_cur.fetchone()
+
+    if not ev_row:
+        raise HTTPException(status_code=404, detail="Evidence item not found.")
+
+    ev = dict(ev_row)
+
+    # Enforce DA jurisdiction over the work's state and district
+    l_cur.execute("SELECT state, district FROM live_works WHERE work_id = ?", (ev["work_id"],))
+    work_row = l_cur.fetchone()
+    if work_row:
+        enforce_da_scope(current_user, work_row[0], work_row[1])
+
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    verified_by = current_user.get("username")
+    verified_by_name = current_user.get("full_name") or "District Authority"
+
+    l_cur.execute("""
+        UPDATE project_evidence SET
+            verification_status = 'VERIFIED',
+            verified_by = ?,
+            verified_by_name = ?,
+            verified_at = ?,
+            verification_comments = ?
+        WHERE id = ?
+    """, (verified_by, verified_by_name, now_str, comments or "Verified by District Authority", evidence_id))
+
+    l_cur.execute("""
+        INSERT INTO audit_logs (work_id, actor_id, actor_name, actor_role, action, old_status, new_status, comments)
+        VALUES (?, ?, ?, 'District Authority', 'EVIDENCE_VERIFIED', 'PENDING_VERIFICATION', 'VERIFIED', ?)
+    """, (ev["work_id"], current_user["id"], verified_by_name, f"Verified {ev['evidence_type']} ({ev['milestone']}). Remarks: {comments or 'Approved'}"))
+
+    l_cur.execute("""
+        INSERT INTO notifications (target_role, title, message, work_id)
+        VALUES ('implementing_agency', 'Evidence Verified', ?, ?)
+    """, (f"Your evidence submission ({ev['evidence_type']}) for work '{ev['work_id']}' has been VERIFIED.", ev["work_id"]))
+
+    l_db.commit()
+
+    log_security_event(
+        l_db, action="EVIDENCE_VERIFIED", status_code="200",
+        actor_id=current_user["id"], actor_username=current_user["username"], actor_role=current_user["role"],
+        resource_type="evidence", resource_id=str(evidence_id),
+        details=f"DA verified evidence {evidence_id} for {ev['work_id']}"
+    )
+
+    return {
+        "success": True,
+        "message": "Evidence verified successfully.",
+        "evidence_id": evidence_id,
+        "status": "VERIFIED"
+    }
+
+
+@app.post("/api/evidence/{evidence_id}/reject")
+def reject_evidence(
+    evidence_id: int,
+    reason: str = Form(...),
+    current_user: Dict[str, Any] = Depends(require_role("district_authority", "admin")),
+    l_db: sqlite3.Connection = Depends(get_live_db)
+):
+    """District Authority rejects evidence submission with mandatory reason and jurisdiction check."""
+    if not reason or not reason.strip():
+        raise HTTPException(status_code=400, detail="Rejection reason is mandatory.")
+
+    l_cur = l_db.cursor()
+    l_cur.execute("SELECT * FROM project_evidence WHERE id = ?", (evidence_id,))
+    ev_row = l_cur.fetchone()
+
+    if not ev_row:
+        raise HTTPException(status_code=404, detail="Evidence item not found.")
+
+    ev = dict(ev_row)
+
+    # Enforce DA jurisdiction
+    l_cur.execute("SELECT state, district FROM live_works WHERE work_id = ?", (ev["work_id"],))
+    work_row = l_cur.fetchone()
+    if work_row:
+        enforce_da_scope(current_user, work_row[0], work_row[1])
+
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    rejected_by = current_user.get("username")
+    rejected_by_name = current_user.get("full_name") or "District Authority"
+
+    l_cur.execute("""
+        UPDATE project_evidence SET
+            verification_status = 'REJECTED',
+            verified_by = ?,
+            verified_by_name = ?,
+            verified_at = ?,
+            verification_comments = ?
+        WHERE id = ?
+    """, (rejected_by, rejected_by_name, now_str, reason.strip(), evidence_id))
+
+    l_cur.execute("""
+        INSERT INTO audit_logs (work_id, actor_id, actor_name, actor_role, action, old_status, new_status, comments)
+        VALUES (?, ?, ?, 'District Authority', 'EVIDENCE_REJECTED', 'PENDING_VERIFICATION', 'REJECTED', ?)
+    """, (ev["work_id"], current_user["id"], rejected_by_name, f"Rejected {ev['evidence_type']}. Reason: {reason.strip()}"))
+
+    l_cur.execute("""
+        INSERT INTO notifications (target_role, title, message, work_id)
+        VALUES ('implementing_agency', 'Evidence Rejected', ?, ?)
+    """, (f"Your evidence ({ev['evidence_type']}) for work '{ev['work_id']}' was REJECTED: {reason.strip()}", ev["work_id"]))
+
+    l_db.commit()
+
+    log_security_event(
+        l_db, action="EVIDENCE_REJECTED", status_code="200",
+        actor_id=current_user["id"], actor_username=current_user["username"], actor_role=current_user["role"],
+        resource_type="evidence", resource_id=str(evidence_id),
+        details=f"DA rejected evidence {evidence_id}: {reason.strip()}"
+    )
+
+    return {
+        "success": True,
+        "message": "Evidence rejected with reason.",
+        "evidence_id": evidence_id,
+        "status": "REJECTED",
+        "reason": reason.strip()
+    }
+
+
+@app.post("/api/evidence/{evidence_id}/resubmit")
+async def resubmit_evidence_alias(
+    evidence_id: int,
+    file: UploadFile = File(...),
+    description: Optional[str] = Form(""),
+    current_user: Dict[str, Any] = Depends(require_role("implementing_agency", "admin")),
+    l_db: sqlite3.Connection = Depends(get_live_db),
+    h_db: sqlite3.Connection = Depends(get_historical_db)
+):
+    """Resubmits evidence for a previously rejected item with agency validation."""
+    l_cur = l_db.cursor()
+    l_cur.execute("SELECT * FROM project_evidence WHERE id = ?", (evidence_id,))
+    ev_row = l_cur.fetchone()
+
+    if not ev_row:
+        raise HTTPException(status_code=404, detail="Target evidence item not found.")
+
+    ev = dict(ev_row)
+    return await submit_project_evidence(
+        work_id=ev["work_id"],
+        evidence_type=ev["evidence_type"],
+        milestone=ev.get("milestone"),
+        description=description or ev.get("description"),
+        resubmit_of_id=evidence_id,
+        file=file,
+        current_user=current_user,
+        l_db=l_db,
+        h_db=h_db
+    )
+
+
+@app.get("/api/evidence/{evidence_id}/file")
+def serve_evidence_file(
+    evidence_id: int,
+    l_db: sqlite3.Connection = Depends(get_live_db)
+):
+    """Serves evidence file safely with path traversal protection."""
+    l_cur = l_db.cursor()
+    l_cur.execute("SELECT stored_file_name, mime_type, file_name FROM project_evidence WHERE id = ?", (evidence_id,))
+    row = l_cur.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Evidence record not found.")
+
+    stored_filename = row[0]
+    mime_type = row[1] or "application/octet-stream"
+
+    safe_name = os.path.basename(stored_filename)
+    file_path = os.path.join(EVIDENCE_UPLOAD_DIR, safe_name)
+
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="Evidence file not found on server storage.")
+
+    return FileResponse(file_path, media_type=mime_type, filename=row[2] or safe_name)
+
+
+@app.get("/api/da/evidence-pending")
+def get_da_pending_evidence(
+    current_user: Dict[str, Any] = Depends(require_role("district_authority", "admin")),
+    l_db: sqlite3.Connection = Depends(get_live_db)
+):
+    """Fetches all pending evidence submissions for District Authority review queue scoped to jurisdiction."""
+    l_cur = l_db.cursor()
+
+    if current_user["role"] == "district_authority":
+        da_district = current_user.get("district") or ""
+        l_cur.execute("""
+            SELECT e.*, w.title as work_title, w.state, w.district, w.constituency
+            FROM project_evidence e
+            LEFT JOIN live_works w ON e.work_id = w.work_id
+            WHERE e.verification_status = 'PENDING_VERIFICATION'
+              AND (w.district IS NULL OR UPPER(w.district) = UPPER(?))
+            ORDER BY e.id DESC
+        """, (da_district,))
+    else:
+        l_cur.execute("""
+            SELECT e.*, w.title as work_title, w.state, w.district, w.constituency
+            FROM project_evidence e
+            LEFT JOIN live_works w ON e.work_id = w.work_id
+            WHERE e.verification_status = 'PENDING_VERIFICATION'
+            ORDER BY e.id DESC
+        """)
+
+    rows = [dict(r) for r in l_cur.fetchall()]
+
+    for r in rows:
+        if r.get("screening_results") and isinstance(r["screening_results"], str):
+            try:
+                r["screening_results"] = json.loads(r["screening_results"])
+            except Exception:
+                pass
+
+    return {
+        "count": len(rows),
+        "items": rows
+    }
 
 
 # Mount static assets directory

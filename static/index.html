@@ -56,20 +56,16 @@
           </div>
         </div>
 
-        <!-- Role Selector / Switcher -->
-        <div class="flex items-center gap-3">
+        <!-- Authentication & User Status Bar -->
+        <div id="auth-status-container" class="flex items-center gap-3">
           <div class="text-right hidden sm:block">
-            <div class="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Active Stakeholder View</div>
-            <div id="current-user-label" class="text-xs font-bold text-gov-primary">Citizen / Public — Demo User</div>
+            <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Stakeholder Session</div>
+            <div id="current-user-label" class="text-xs font-bold text-gov-primary">Public Citizen (Guest)</div>
           </div>
-
-          <div class="relative">
-            <select id="role-switcher" onchange="handleRoleChange(this.value)" class="text-xs font-semibold bg-slate-100 text-slate-800 border border-slate-300 rounded-lg px-3 py-2 pr-8 focus:ring-2 focus:ring-gov-primary focus:outline-hidden cursor-pointer hover:bg-slate-200 transition">
-              <option value="citizen">👤 Citizen / Public — Demo User</option>
-              <option value="mp">🏛️ MP Portal — Demo User</option>
-              <option value="district_authority">⚖️ District Authority — Demo User</option>
-              <option value="implementing_agency">🛠️ Implementing Agency — Demo User</option>
-            </select>
+          <div id="auth-button-slot">
+            <button onclick="openLoginModal()" class="bg-gov-primary hover:bg-blue-900 text-white font-semibold text-xs px-3.5 py-2 rounded-lg transition shadow-xs flex items-center gap-1.5 cursor-pointer">
+              <span>🔐</span> Sign In
+            </button>
           </div>
         </div>
       </div>
@@ -94,11 +90,17 @@
         <button id="nav-monitoring" onclick="switchNav('monitoring')" class="px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap text-slate-600 hover:text-gov-primary hover:bg-slate-100">
           <span>🤖</span> PROJECT MONITORING & ML
         </button>
+        <button id="nav-delay" onclick="openDelayPredictionTab()" class="px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap text-slate-600 hover:text-gov-primary hover:bg-slate-100">
+          <span>⏱️</span> DELAY PREDICTION & EARLY WARNING
+        </button>
         <button id="nav-alerts" onclick="switchNav('alerts')" class="px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap text-slate-600 hover:text-gov-primary hover:bg-slate-100">
           <span>🚨</span> ALERTS
         </button>
         <button id="nav-analytics" onclick="switchNav('analytics')" class="px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap text-slate-600 hover:text-gov-primary hover:bg-slate-100">
           <span>📊</span> DATA ANALYTICS & CHARTS
+        </button>
+        <button id="nav-admin" onclick="switchNav('admin')" class="px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap text-purple-700 hover:text-purple-900 hover:bg-purple-50 hidden">
+          <span>🛡️</span> SYSTEM ADMIN
         </button>
       </nav>
     </div>
@@ -945,7 +947,19 @@
 
     <!-- 6. PROJECT MONITORING & ML ANOMALY DETECTION VIEW -->
     <section id="view-monitoring" class="space-y-6 hidden">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-xs">
+      <!-- Sub-Tabs: Anomaly Screening vs Delay Prediction -->
+      <div class="flex flex-wrap items-center gap-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200">
+        <button id="mon-subtab-anomaly" onclick="switchMonitoringSubTab('anomaly')" class="px-5 py-2.5 rounded-xl text-xs font-bold transition shadow-xs bg-gov-primary text-white flex items-center gap-2 cursor-pointer">
+          <span>🤖</span> Anomaly Screening (Isolation Forest)
+        </button>
+        <button id="mon-subtab-delay" onclick="switchMonitoringSubTab('delay')" class="px-5 py-2.5 rounded-xl text-xs font-bold transition text-slate-700 hover:text-gov-primary hover:bg-slate-200 flex items-center gap-2 cursor-pointer">
+          <span>⏱️</span> Delay Prediction & Early Warning (Supervised RF)
+        </button>
+      </div>
+
+      <!-- A. ISOLATION FOREST ANOMALY SUB-VIEW -->
+      <div id="mon-subview-anomaly" class="space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-xs">
         <div>
           <div class="text-xs font-bold text-gov-primary uppercase tracking-wider">AI & Data Feature Intelligence</div>
           <h2 class="text-2xl font-black text-gov-dark mt-0.5">Project Monitoring & ML Anomaly Screening</h2>
@@ -1120,6 +1134,171 @@
           </div>
         </div>
       </div>
+      </div><!-- End mon-subview-anomaly -->
+
+      <!-- B. DELAY PREDICTION & EARLY WARNING SUB-VIEW -->
+      <div id="mon-subview-delay" class="space-y-6 hidden">
+        <!-- Header -->
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-xs">
+          <div>
+            <div class="text-xs font-bold text-amber-700 uppercase tracking-wider">Supervised Machine Learning Intelligence</div>
+            <h2 class="text-2xl font-black text-gov-dark mt-0.5">Project Delay Prediction & Early Warning</h2>
+            <p class="text-xs text-slate-500 font-medium mt-0.5">Random Forest Classifier estimating deadline slippage risk on real MPLADS projects using early mobilization features.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button onclick="openDelayMetricsModal()" class="bg-blue-50 hover:bg-blue-100 text-gov-primary border border-blue-200 text-xs font-bold px-3.5 py-2.5 rounded-xl transition shadow-xs flex items-center gap-1.5 cursor-pointer">
+              <span>📊 Model Metrics & Audit</span>
+            </button>
+            <button onclick="triggerRetrainDelayModel()" class="bg-gov-dark hover:bg-slate-800 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition shadow-xs flex items-center gap-1.5 cursor-pointer">
+              <span>⚙️ Retrain Delay Model</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Transparency & Governance Disclaimer -->
+        <div class="bg-amber-50/70 border border-amber-200 text-amber-950 p-4 rounded-2xl text-xs space-y-1">
+          <div class="font-bold text-amber-900 flex items-center gap-2">
+            <span>⚠️ Early Warning & Governance Guidance</span>
+          </div>
+          <p class="leading-relaxed">
+            The supervised Random Forest model estimates the <strong>Predicted Delay Probability (0–100%)</strong> based on sanction outlay magnitude, administrative approval lead times, and early 90-day fund mobilization velocity. <strong>Predicted delay probability is an operational scheduling estimate to help MPs and District Authorities prioritize proactive project monitoring. It does NOT detect or imply contractor negligence, fraud, or administrative corruption.</strong>
+          </p>
+        </div>
+
+        <!-- Summary KPI Cards -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" id="delay-kpi-grid">
+          <!-- Card 1: Eligible Projects Assessed -->
+          <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-2">
+            <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Eligible Projects Assessed</div>
+            <div class="text-2xl font-black text-slate-800" id="dp-kpi-total-assessed">--</div>
+            <div class="text-xs space-y-1 pt-1 border-t border-slate-100">
+              <div class="flex justify-between text-slate-600"><span>Verified Completed:</span> <strong id="dp-kpi-completed-count" class="text-emerald-700">--</strong></div>
+              <div class="flex justify-between text-slate-600"><span>Active Ongoing Monitored:</span> <strong id="dp-kpi-ongoing-count" class="text-gov-primary">--</strong></div>
+            </div>
+          </div>
+
+          <!-- Card 2: High Predicted Delay Risk -->
+          <div class="bg-white p-5 rounded-2xl border border-red-200 bg-red-50/20 shadow-xs space-y-2">
+            <div class="text-xs font-semibold text-red-600 uppercase tracking-wide">High Delay Risk (Prob ≥ 70%)</div>
+            <div class="text-2xl font-black text-red-700" id="dp-kpi-high-risk">--</div>
+            <div class="text-xs space-y-1 pt-1 border-t border-red-100">
+              <div class="flex justify-between text-slate-600"><span>Portfolio Ratio:</span> <strong id="dp-kpi-high-pct" class="text-red-700">--%</strong></div>
+              <div class="flex justify-between text-slate-600"><span>Monitoring Priority:</span> <strong class="text-red-600 font-bold">URGENT SCRUTINY</strong></div>
+            </div>
+          </div>
+
+          <!-- Card 3: Medium Predicted Delay Risk -->
+          <div class="bg-white p-5 rounded-2xl border border-amber-200 bg-amber-50/20 shadow-xs space-y-2">
+            <div class="text-xs font-semibold text-amber-600 uppercase tracking-wide">Medium Delay Risk (35–70%)</div>
+            <div class="text-2xl font-black text-amber-700" id="dp-kpi-med-risk">--</div>
+            <div class="text-xs space-y-1 pt-1 border-t border-amber-100">
+              <div class="flex justify-between text-slate-600"><span>Portfolio Ratio:</span> <strong id="dp-kpi-med-pct" class="text-amber-700">--%</strong></div>
+              <div class="flex justify-between text-slate-600"><span>Monitoring Priority:</span> <strong class="text-amber-600 font-bold">REGULAR MONITORING</strong></div>
+            </div>
+          </div>
+
+          <!-- Card 4: Approaching 1-Year Deadline -->
+          <div class="bg-white p-5 rounded-2xl border border-blue-200 bg-blue-50/20 shadow-xs space-y-2">
+            <div class="text-xs font-semibold text-blue-600 uppercase tracking-wide">Due Within 90 Days</div>
+            <div class="text-2xl font-black text-blue-900" id="dp-kpi-approaching">--</div>
+            <div class="text-xs space-y-1 pt-1 border-t border-blue-100">
+              <div class="flex justify-between text-slate-600"><span>Deadline Rule:</span> <strong class="text-slate-700">Statutory 1-Year Limit</strong></div>
+              <div class="flex justify-between text-slate-600"><span>Early Warning Alert:</span> <strong class="text-blue-700 font-bold">TRIGGERED</strong></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Filter Bar -->
+        <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-3">
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3 text-xs">
+            <div class="lg:col-span-2">
+              <label class="block font-semibold text-slate-600 mb-1">Search Project / MP / Constituency</label>
+              <input type="text" id="dp-filter-q" placeholder="Enter Work ID, title, MP, constituency..." class="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-gov-primary" onkeyup="if(event.key==='Enter') applyDelayFilter()">
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-600 mb-1">State</label>
+              <select id="dp-filter-state" class="w-full border border-slate-300 rounded-lg px-2.5 py-2 focus:ring-2 focus:ring-gov-primary" onchange="applyDelayFilter()">
+                <option value="">All States</option>
+              </select>
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-600 mb-1">Work Category</label>
+              <select id="dp-filter-category" class="w-full border border-slate-300 rounded-lg px-2.5 py-2 focus:ring-2 focus:ring-gov-primary" onchange="applyDelayFilter()">
+                <option value="">All Categories</option>
+              </select>
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-600 mb-1">Predicted Risk Level</label>
+              <select id="dp-filter-risk" class="w-full border border-slate-300 rounded-lg px-2.5 py-2 focus:ring-2 focus:ring-gov-primary" onchange="applyDelayFilter()">
+                <option value="">All Risk Levels</option>
+                <option value="HIGH">High Risk (≥70%)</option>
+                <option value="MEDIUM">Medium Risk (35-70%)</option>
+                <option value="LOW">Low Risk (&lt;35%)</option>
+              </select>
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-600 mb-1">Execution Status</label>
+              <select id="dp-filter-status" class="w-full border border-slate-300 rounded-lg px-2.5 py-2 focus:ring-2 focus:ring-gov-primary" onchange="applyDelayFilter()">
+                <option value="">All Statuses</option>
+                <option value="ONGOING">Active Ongoing Works</option>
+                <option value="COMPLETED">Verified Completed</option>
+              </select>
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-600 mb-1">Deadline Proximity</label>
+              <select id="dp-filter-approaching" class="w-full border border-slate-300 rounded-lg px-2.5 py-2 focus:ring-2 focus:ring-gov-primary" onchange="applyDelayFilter()">
+                <option value="">All Deadlines</option>
+                <option value="1">Due Within 90 Days Only</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-between border-t border-slate-100 pt-3 text-xs">
+            <div class="text-slate-500 font-medium">
+              Showing <span id="dp-results-count" class="font-bold text-gov-primary">0</span> projects evaluated by supervised ML.
+            </div>
+            <div class="flex items-center gap-2">
+              <button onclick="resetDelayFilters()" class="text-xs font-medium text-slate-500 hover:text-slate-800 px-3 py-1.5 rounded-lg border border-slate-200 cursor-pointer">Reset Filters</button>
+              <button onclick="applyDelayFilter()" class="bg-gov-primary hover:bg-blue-900 text-white font-bold px-4 py-1.5 rounded-lg text-xs shadow-xs cursor-pointer">Apply Filters</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Project Risk Table -->
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="w-full gov-table text-left">
+              <thead>
+                <tr>
+                  <th class="w-36">Work ID</th>
+                  <th>Project Details</th>
+                  <th>State & Location</th>
+                  <th>Sanction Date</th>
+                  <th>1-Year Deadline</th>
+                  <th>Status</th>
+                  <th class="w-40">Predicted Delay Probability</th>
+                  <th>Risk Tier</th>
+                  <th class="text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody id="dp-table-body">
+                <tr>
+                  <td colspan="9" class="text-center py-8 text-slate-400">Loading delay prediction data...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Pagination -->
+          <div class="px-6 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs">
+            <div class="text-slate-600">Page <strong id="dp-page-num">1</strong> of <strong id="dp-total-pages">1</strong></div>
+            <div class="flex items-center gap-2">
+              <button id="dp-prev-btn" onclick="changeDelayPage(-1)" class="px-3 py-1.5 rounded-md border border-slate-300 hover:bg-slate-100 disabled:opacity-50 cursor-pointer">Previous</button>
+              <button id="dp-next-btn" onclick="changeDelayPage(1)" class="px-3 py-1.5 rounded-md border border-slate-300 hover:bg-slate-100 disabled:opacity-50 cursor-pointer">Next</button>
+            </div>
+          </div>
+        </div>
+      </div><!-- End mon-subview-delay -->
     </section>
 
 
@@ -1344,10 +1523,274 @@
       </div>
     </section>
 
+    <!-- 9. SYSTEM ADMIN PORTAL VIEW -->
+    <section id="view-admin" class="space-y-6 hidden">
+      <!-- Admin Header Banner -->
+      <div class="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-2xl p-6 sm:p-8 shadow-lg relative overflow-hidden flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold bg-purple-500/20 text-purple-200 border border-purple-500/30 mb-2">
+            <span>🛡️</span> SYSTEM SECURITY & USER ACCESS CONTROL
+          </div>
+          <h2 class="text-2xl sm:text-3xl font-black tracking-tight">National Portal Administration</h2>
+          <p class="text-xs text-slate-300 mt-1 max-w-2xl">
+            Centralized role-based access control (RBAC), Argon2id stakeholder credential provisioning, account activation lifecycle, and persistent security audit logging.
+          </p>
+        </div>
+        <div class="flex items-center gap-3">
+          <button onclick="openCreateUserModal()" class="px-4 py-2.5 bg-gov-accent hover:bg-orange-600 text-white text-xs font-bold rounded-xl shadow-md transition flex items-center gap-2 cursor-pointer">
+            <span>➕</span> Provision Stakeholder
+          </button>
+          <button onclick="loadAdminData()" class="px-3.5 py-2.5 bg-white/10 hover:bg-white/20 text-white text-xs font-semibold rounded-xl border border-white/20 transition flex items-center gap-1.5 cursor-pointer">
+            <span>🔄</span> Refresh
+          </button>
+        </div>
+      </div>
+
+      <!-- Navigation tabs within Admin Portal -->
+      <div class="flex items-center gap-2 border-b border-slate-200 pb-2 text-xs font-bold">
+        <button id="admin-tab-users" onclick="switchAdminTab('users')" class="px-4 py-2 rounded-lg bg-gov-primary text-white shadow-xs cursor-pointer">
+          👥 Stakeholder Accounts (<span id="admin-user-count">0</span>)
+        </button>
+        <button id="admin-tab-logs" onclick="switchAdminTab('logs')" class="px-4 py-2 rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 cursor-pointer">
+          📜 Security Audit Trail (<span id="admin-log-count">0</span>)
+        </button>
+      </div>
+
+      <!-- Admin Tab: User Management -->
+      <div id="admin-content-users" class="space-y-4">
+        <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <h3 class="font-bold text-slate-800 text-sm">Provisioned System Users & Jurisdictions</h3>
+              <p class="text-xs text-slate-500">Argon2id Salted Hashes • Role Authorization • Scoped Access</p>
+            </div>
+            <button onclick="openCreateUserModal()" class="self-start sm:self-auto px-3.5 py-1.5 bg-gov-primary hover:bg-blue-900 text-white text-xs font-semibold rounded-lg shadow-xs transition">
+              + New User
+            </button>
+          </div>
+          <div class="border border-slate-200 rounded-xl overflow-x-auto">
+            <table class="w-full gov-table text-left text-xs">
+              <thead>
+                <tr>
+                  <th>Username</th>
+                  <th>Full Name / Designation</th>
+                  <th>Role</th>
+                  <th>Assigned Jurisdiction</th>
+                  <th>Status</th>
+                  <th>Last Login</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="admin-users-tbody">
+                <tr><td colspan="7" class="text-center py-6 text-slate-400">Loading user accounts...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Admin Tab: Security Audit Logs -->
+      <div id="admin-content-logs" class="space-y-4 hidden">
+        <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="font-bold text-slate-800 text-sm">Security Audit Trail</h3>
+              <p class="text-xs text-slate-500">Immutable audit records: logins, permission denials, rate limits, and mutations.</p>
+            </div>
+            <span class="text-[11px] font-mono bg-slate-100 text-slate-600 px-3 py-1 rounded-lg">security_audit_logs</span>
+          </div>
+          <div class="border border-slate-200 rounded-xl overflow-x-auto">
+            <table class="w-full gov-table text-left text-xs">
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Action</th>
+                  <th>Actor (Username / Role)</th>
+                  <th>IP Address</th>
+                  <th>Status</th>
+                  <th>Details</th>
+                </tr>
+              </thead>
+              <tbody id="admin-logs-tbody">
+                <tr><td colspan="6" class="text-center py-6 text-slate-400">Loading audit trail...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
   </main>
 
 
   <!-- MODALS -->
+
+  <!-- 0. Stakeholder Authentication / Sign In Modal -->
+  <div id="modal-login" class="fixed inset-0 modal-backdrop z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 max-h-[95vh] overflow-y-auto">
+      <div class="flex items-center justify-between border-b border-slate-200 pb-3">
+        <div class="flex items-center gap-2.5">
+          <div class="w-10 h-10 rounded-xl bg-gov-primary/10 text-gov-primary flex items-center justify-center text-xl font-bold">
+            🔐
+          </div>
+          <div>
+            <h3 class="font-bold text-gov-dark text-base">Stakeholder Sign In</h3>
+            <p class="text-[11px] text-slate-500">Authenticate with Argon2id encrypted credentials</p>
+          </div>
+        </div>
+        <button onclick="closeModal('modal-login')" class="text-slate-400 hover:text-slate-600 text-2xl font-bold cursor-pointer">&times;</button>
+      </div>
+
+      <!-- Error alert container -->
+      <div id="login-error-alert" class="hidden p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs flex items-center gap-2">
+        <span class="text-base">⚠️</span>
+        <span id="login-error-text">Invalid username or password.</span>
+      </div>
+
+      <form id="form-login" onsubmit="handleLoginSubmit(event)" class="space-y-3.5 text-xs">
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">Username / Stakeholder ID *</label>
+          <input type="text" id="login-username" required placeholder="e.g. mp_demo, da_demo, ia_demo" class="w-full border border-slate-300 rounded-lg p-2.5 text-xs font-medium focus:ring-2 focus:ring-gov-primary focus:outline-hidden">
+        </div>
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">Password *</label>
+          <div class="relative">
+            <input type="password" id="login-password" required placeholder="Enter password" class="w-full border border-slate-300 rounded-lg p-2.5 text-xs pr-10 font-medium focus:ring-2 focus:ring-gov-primary focus:outline-hidden">
+            <button type="button" onclick="togglePasswordVisibility('login-password')" class="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 text-xs cursor-pointer">👁️</button>
+          </div>
+        </div>
+
+        <button type="submit" id="login-submit-btn" class="w-full py-2.5 bg-gov-primary hover:bg-blue-900 text-white font-bold rounded-xl text-xs shadow-md transition flex items-center justify-center gap-2 cursor-pointer">
+          <span>Sign In Securely</span> →
+        </button>
+      </form>
+
+      <!-- Quick Demo Sign-in selector -->
+      <div class="pt-3 border-t border-slate-200 space-y-2">
+        <div class="flex items-center justify-between text-[11px] text-slate-500">
+          <span class="font-bold uppercase tracking-wider">Quick Stakeholder Login</span>
+          <span class="text-[10px] text-slate-400">One-click evaluation</span>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px]">
+          <button type="button" onclick="quickLogin('mp_demo', 'MP@Sansad2026!')" class="p-2 text-left rounded-lg border border-slate-200 hover:border-gov-primary hover:bg-blue-50 transition cursor-pointer">
+            <div class="font-bold text-slate-800">🏛️ MP (Dewas)</div>
+            <div class="text-[10px] text-slate-500">Mahendra S. Solanky</div>
+          </button>
+          <button type="button" onclick="quickLogin('da_demo', 'DA@District2026!')" class="p-2 text-left rounded-lg border border-slate-200 hover:border-gov-primary hover:bg-blue-50 transition cursor-pointer">
+            <div class="font-bold text-slate-800">⚖️ DA (Agar-Malwa)</div>
+            <div class="text-[10px] text-slate-500">District Magistrate</div>
+          </button>
+          <button type="button" onclick="quickLogin('da_jaipur', 'DA@Jaipur2026!')" class="p-2 text-left rounded-lg border border-slate-200 hover:border-gov-primary hover:bg-blue-50 transition cursor-pointer">
+            <div class="font-bold text-slate-800">⚖️ DA (Jaipur)</div>
+            <div class="text-[10px] text-slate-500">District Collector</div>
+          </button>
+          <button type="button" onclick="quickLogin('ia_demo', 'Agency@Field2026!')" class="p-2 text-left rounded-lg border border-slate-200 hover:border-gov-primary hover:bg-blue-50 transition cursor-pointer">
+            <div class="font-bold text-slate-800">🛠️ IA (PWD)</div>
+            <div class="text-[10px] text-slate-500">Executive Engineer</div>
+          </button>
+          <button type="button" onclick="quickLogin('ia_rural', 'Agency@Rural2026!')" class="p-2 text-left rounded-lg border border-slate-200 hover:border-gov-primary hover:bg-blue-50 transition cursor-pointer">
+            <div class="font-bold text-slate-800">🛠️ IA (MPRRDA)</div>
+            <div class="text-[10px] text-slate-500">Rural Road Authority</div>
+          </button>
+          <button type="button" onclick="quickLogin('admin_demo', 'Admin@MPLADS2026!')" class="p-2 text-left rounded-lg border border-slate-200 hover:border-purple-600 hover:bg-purple-50 transition cursor-pointer">
+            <div class="font-bold text-purple-900">🛡️ System Admin</div>
+            <div class="text-[10px] text-purple-600">National Administrator</div>
+          </button>
+          <button type="button" onclick="quickLogin('citizen_demo', 'Citizen@Public2026!')" class="p-2 text-left rounded-lg border border-slate-200 hover:border-slate-400 hover:bg-slate-50 transition sm:col-span-2 cursor-pointer">
+            <div class="font-bold text-slate-800">👤 Citizen / Public Observer</div>
+            <div class="text-[10px] text-slate-500">Public Read-Only Transparency</div>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Admin: Create User Modal -->
+  <div id="modal-create-user" class="fixed inset-0 modal-backdrop z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between border-b border-slate-200 pb-3">
+        <div>
+          <h3 class="font-bold text-gov-dark text-lg">Provision New Stakeholder</h3>
+          <p class="text-xs text-slate-500">Create a secure user account with role-based jurisdiction</p>
+        </div>
+        <button onclick="closeModal('modal-create-user')" class="text-slate-400 hover:text-slate-600 text-2xl font-bold cursor-pointer">&times;</button>
+      </div>
+
+      <form id="form-create-user" onsubmit="handleCreateUserSubmit(event)" class="space-y-3.5 text-xs">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Username *</label>
+            <input type="text" id="cu-username" required placeholder="e.g. mp_varanasi" class="w-full border border-slate-300 rounded-lg p-2.5 text-xs">
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Temporary Password *</label>
+            <input type="password" id="cu-password" required minlength="6" placeholder="Min 6 characters" class="w-full border border-slate-300 rounded-lg p-2.5 text-xs">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Full Name *</label>
+            <input type="text" id="cu-fullname" required placeholder="Officer or Stakeholder Name" class="w-full border border-slate-300 rounded-lg p-2.5 text-xs">
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Official Email *</label>
+            <input type="email" id="cu-email" required placeholder="user@nic.in / @gov.in" class="w-full border border-slate-300 rounded-lg p-2.5 text-xs">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Role *</label>
+            <select id="cu-role" required class="w-full border border-slate-300 rounded-lg p-2.5 text-xs font-semibold">
+              <option value="citizen">Citizen (Public)</option>
+              <option value="mp">Member of Parliament (MP)</option>
+              <option value="district_authority">District Authority (DA)</option>
+              <option value="implementing_agency">Implementing Agency (IA)</option>
+              <option value="admin">System Administrator</option>
+            </select>
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Official Designation</label>
+            <input type="text" id="cu-designation" placeholder="e.g. District Collector, Superintending Engineer" class="w-full border border-slate-300 rounded-lg p-2.5 text-xs">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">State</label>
+            <input type="text" id="cu-state" placeholder="e.g. Madhya Pradesh" class="w-full border border-slate-300 rounded-lg p-2.5 text-xs">
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">District</label>
+            <input type="text" id="cu-district" placeholder="e.g. Agar-Malwa" class="w-full border border-slate-300 rounded-lg p-2.5 text-xs">
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Constituency</label>
+            <input type="text" id="cu-constituency" placeholder="e.g. DEWAS(SC)" class="w-full border border-slate-300 rounded-lg p-2.5 text-xs">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Agency ID (For IA)</label>
+            <input type="number" id="cu-agency-id" placeholder="e.g. 1, 101" class="w-full border border-slate-300 rounded-lg p-2.5 text-xs">
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Agency Name (For IA)</label>
+            <input type="text" id="cu-agency-name" placeholder="e.g. Public Works Department" class="w-full border border-slate-300 rounded-lg p-2.5 text-xs">
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-3 border-t border-slate-200">
+          <button type="button" onclick="closeModal('modal-create-user')" class="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-100 font-semibold cursor-pointer">Cancel</button>
+          <button type="submit" id="cu-submit-btn" class="px-5 py-2 bg-gov-primary hover:bg-blue-900 text-white rounded-lg font-bold shadow-xs cursor-pointer">
+            Create User Account
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <!-- A. MP Recommend New Work Modal -->
   <div id="modal-recommend" class="fixed inset-0 modal-backdrop z-50 flex items-center justify-center p-4 hidden">
@@ -1807,6 +2250,186 @@
 
       <div class="flex justify-end pt-2 border-t border-slate-200">
         <button onclick="closeModal('modal-inspect')" class="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-semibold text-xs">Close Inspection</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Project Delay Prediction & Early Warning Inspection -->
+  <div id="modal-delay-inspect" class="fixed inset-0 modal-backdrop z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl max-w-4xl w-full p-6 shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto">
+      <div class="flex items-start justify-between border-b border-slate-200 pb-3">
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-bold text-gov-primary uppercase tracking-wider">Supervised Delay Risk Audit</span>
+            <span id="dp-ins-risk-badge" class="px-2 py-0.5 rounded-full text-[11px] font-bold bg-red-100 text-red-700">HIGH RISK</span>
+          </div>
+          <h3 id="dp-ins-work-title" class="font-bold text-gov-dark text-lg mt-0.5 line-clamp-1">Project Inspection</h3>
+          <p id="dp-ins-work-id" class="font-mono text-xs text-slate-500 font-semibold">WS/...</p>
+        </div>
+        <button onclick="closeModal('modal-delay-inspect')" class="text-slate-400 hover:text-slate-600 text-2xl font-bold cursor-pointer">&times;</button>
+      </div>
+
+      <!-- Key Probability Gauge / Meter -->
+      <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <div class="text-xs text-slate-500 font-medium">Estimated Likelihood of Exceeding 1-Year Statutory Deadline:</div>
+          <div class="flex items-baseline gap-2 mt-1">
+            <span id="dp-ins-prob-val" class="text-3xl font-black text-red-700">84.2%</span>
+            <span id="dp-ins-deadline-note" class="text-xs font-semibold text-slate-600">Due in 55 days</span>
+          </div>
+          <div class="w-64 bg-slate-200 rounded-full h-2.5 mt-2 overflow-hidden">
+            <div id="dp-ins-prob-bar" class="bg-red-600 h-2.5 rounded-full" style="width: 84%"></div>
+          </div>
+        </div>
+        <div class="text-xs bg-white p-3 rounded-lg border border-slate-200 max-w-xs">
+          <div class="font-bold text-slate-700">Primary Risk Factor Rationale:</div>
+          <p id="dp-ins-factors" class="text-slate-500 mt-0.5 text-[11px] leading-relaxed">Loading rationale...</p>
+        </div>
+      </div>
+
+      <!-- Comparison: Recorded Facts vs Model Estimates -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+        <!-- Column 1: Recorded Facts -->
+        <div class="bg-white p-4 rounded-xl border border-slate-200 space-y-2">
+          <h4 class="font-bold text-slate-800 uppercase tracking-wide border-b border-slate-100 pb-1.5 flex items-center gap-1.5">
+            <span>📋</span> Recorded Administrative Facts
+          </h4>
+          <div class="space-y-1.5">
+            <div class="flex justify-between"><span class="text-slate-500">Sanctioned Outlay:</span> <strong id="dp-ins-sanction-amt" class="text-slate-800">--</strong></div>
+            <div class="flex justify-between"><span class="text-slate-500">Recommendation Date:</span> <strong id="dp-ins-rec-date" class="text-slate-700">--</strong></div>
+            <div class="flex justify-between"><span class="text-slate-500">Sanction Date:</span> <strong id="dp-ins-sanc-date" class="text-slate-700">--</strong></div>
+            <div class="flex justify-between"><span class="text-slate-500">Approval Lead Time:</span> <strong id="dp-ins-lead-time" class="text-slate-800">-- days</strong></div>
+            <div class="flex justify-between"><span class="text-slate-500">Early 90-Day Disbursed:</span> <strong id="dp-ins-early-disb" class="text-emerald-700">--</strong></div>
+            <div class="flex justify-between"><span class="text-slate-500">Statutory 1-Year Deadline:</span> <strong id="dp-ins-exp-date" class="text-blue-900">--</strong></div>
+            <div class="flex justify-between"><span class="text-slate-500">Current Execution Status:</span> <strong id="dp-ins-status" class="text-slate-800">--</strong></div>
+          </div>
+        </div>
+
+        <!-- Column 2: Statistical Model Estimates -->
+        <div class="bg-white p-4 rounded-xl border border-slate-200 space-y-2">
+          <h4 class="font-bold text-slate-800 uppercase tracking-wide border-b border-slate-100 pb-1.5 flex items-center gap-1.5">
+            <span>🤖</span> Supervised Model Estimates
+          </h4>
+          <div class="space-y-1.5">
+            <div class="flex justify-between"><span class="text-slate-500">Algorithm:</span> <strong class="text-purple-700">Random Forest Classifier</strong></div>
+            <div class="flex justify-between"><span class="text-slate-500">Predicted Delay Probability:</span> <strong id="dp-ins-prob-pct" class="text-red-700 font-bold">--%</strong></div>
+            <div class="flex justify-between"><span class="text-slate-500">Risk Priority Level:</span> <strong id="dp-ins-risk-tier" class="text-red-700 font-bold">HIGH</strong></div>
+            <div class="flex justify-between"><span class="text-slate-500">Model ROC-AUC:</span> <strong class="text-emerald-700 font-bold">0.9603 (Verified on Holdout)</strong></div>
+            <div class="flex justify-between"><span class="text-slate-500">Early Warning Trigger:</span> <strong id="dp-ins-warning-trigger" class="text-amber-700">ACTIVE WARNING</strong></div>
+            <div class="flex justify-between"><span class="text-slate-500">Prediction Point:</span> <strong class="text-slate-700">Early-Mobilization Checkpoint (90d)</strong></div>
+          </div>
+          <div class="pt-2 border-t border-slate-100 text-[11px] text-slate-400">
+            * Estimates are decision-support indicators, not proof of wrongdoing.
+          </div>
+        </div>
+      </div>
+
+      <!-- Payment Event History Table -->
+      <div class="space-y-2 text-xs">
+        <h4 class="font-bold text-slate-800 uppercase tracking-wide">Recorded Payment Event History (Audit Trail)</h4>
+        <div class="border border-slate-200 rounded-xl overflow-hidden max-h-40 overflow-y-auto">
+          <table class="w-full gov-table text-left">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Vendor / Agency</th>
+                <th>Status</th>
+                <th>Disbursed Amount</th>
+              </tr>
+            </thead>
+            <tbody id="dp-ins-payments-tbody">
+              <tr><td colspan="4" class="text-center py-4 text-slate-400">No payment events recorded.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="flex justify-end pt-2 border-t border-slate-200">
+        <button onclick="closeModal('modal-delay-inspect')" class="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-semibold text-xs cursor-pointer">Close Inspection</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Delay Model Performance & Audit Transparency -->
+  <div id="modal-delay-metrics" class="fixed inset-0 modal-backdrop z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl max-w-3xl w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+      <div class="flex items-start justify-between border-b border-slate-200 pb-3">
+        <div>
+          <div class="text-xs font-bold text-gov-primary uppercase tracking-wider">Model Governance & Validation Audit</div>
+          <h3 class="font-bold text-gov-dark text-lg mt-0.5">Random Forest Delay Prediction Model Performance</h3>
+        </div>
+        <button onclick="closeModal('modal-delay-metrics')" class="text-slate-400 hover:text-slate-600 text-2xl font-bold cursor-pointer">&times;</button>
+      </div>
+
+      <!-- Metrics Grid -->
+      <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 text-center text-xs">
+        <div class="p-3 bg-emerald-50 rounded-xl border border-emerald-200">
+          <div class="text-[10px] text-emerald-600 font-bold uppercase">Accuracy</div>
+          <div class="text-lg font-black text-emerald-800" id="dp-m-acc">91.87%</div>
+        </div>
+        <div class="p-3 bg-blue-50 rounded-xl border border-blue-200">
+          <div class="text-[10px] text-blue-600 font-bold uppercase">Precision</div>
+          <div class="text-lg font-black text-blue-800" id="dp-m-prec">68.44%</div>
+        </div>
+        <div class="p-3 bg-indigo-50 rounded-xl border border-indigo-200">
+          <div class="text-[10px] text-indigo-600 font-bold uppercase">Recall</div>
+          <div class="text-lg font-black text-indigo-800" id="dp-m-rec">86.97%</div>
+        </div>
+        <div class="p-3 bg-purple-50 rounded-xl border border-purple-200">
+          <div class="text-[10px] text-purple-600 font-bold uppercase">F1-Score</div>
+          <div class="text-lg font-black text-purple-800" id="dp-m-f1">76.60%</div>
+        </div>
+        <div class="p-3 bg-amber-50 rounded-xl border border-amber-200">
+          <div class="text-[10px] text-amber-600 font-bold uppercase">ROC-AUC</div>
+          <div class="text-lg font-black text-amber-800" id="dp-m-auc">0.9603</div>
+        </div>
+      </div>
+
+      <!-- Confusion Matrix & Dataset Eligibility Details -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+        <div class="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+          <h4 class="font-bold text-slate-800 uppercase tracking-wide">Holdout Confusion Matrix (N=3,861)</h4>
+          <table class="w-full text-center border-collapse text-xs">
+            <thead>
+              <tr class="bg-slate-200 text-slate-700">
+                <th class="p-1 border border-slate-300">Actual \ Predicted</th>
+                <th class="p-1 border border-slate-300">Pred: On-Time</th>
+                <th class="p-1 border border-slate-300">Pred: Delayed</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="p-1.5 font-bold border border-slate-300 bg-slate-100">True: On-Time</td>
+                <td class="p-1.5 border border-slate-300 text-emerald-700 font-bold">3,033 (TN)</td>
+                <td class="p-1.5 border border-slate-300 text-red-600">237 (FP)</td>
+              </tr>
+              <tr>
+                <td class="p-1.5 font-bold border border-slate-300 bg-slate-100">True: Delayed</td>
+                <td class="p-1.5 border border-slate-300 text-red-600">77 (FN)</td>
+                <td class="p-1.5 border border-slate-300 text-emerald-700 font-bold">514 (TP)</td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="text-[10px] text-slate-500 mt-1">Evaluated strictly on held-out test projects unseen during training.</p>
+        </div>
+
+        <div class="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+          <h4 class="font-bold text-slate-800 uppercase tracking-wide">Dataset Eligibility Audit</h4>
+          <div class="space-y-1 text-slate-600">
+            <div class="flex justify-between"><span>Total Source Projects:</span> <strong class="text-slate-800">41,086</strong></div>
+            <div class="flex justify-between"><span>Eligible Completed Training Records:</span> <strong class="text-emerald-700 font-bold">19,304 (100% verified)</strong></div>
+            <div class="flex justify-between"><span>Training Split (80%):</span> <strong>15,443 records</strong></div>
+            <div class="flex justify-between"><span>Holdout Test Split (20%):</span> <strong>3,861 records</strong></div>
+            <div class="flex justify-between"><span>Excluded Ongoing Records:</span> <strong class="text-amber-700">21,782 records</strong></div>
+          </div>
+          <p class="text-[10px] text-slate-500 leading-snug mt-1 border-t border-slate-200 pt-1">
+            Ongoing projects are excluded from training to prevent label fabrication. They serve as the live scoring target for early warning.
+          </p>
+        </div>
+      </div>
+
+      <div class="flex justify-end pt-2 border-t border-slate-200">
+        <button onclick="closeModal('modal-delay-metrics')" class="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-semibold text-xs cursor-pointer">Close Audit</button>
       </div>
     </div>
   </div>

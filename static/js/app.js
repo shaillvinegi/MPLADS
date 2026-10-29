@@ -16,6 +16,11 @@ let activeSelectedDistrict = "";
 let stateChartInstance = null;
 let statusChartInstance = null;
 
+// Auth State
+let currentUser = null;
+let sessionToken = null;
+let csrfToken = null;
+
 // Currency Formatter
 function formatINR(amount) {
   if (amount === undefined || amount === null || isNaN(amount)) return "₹0";
@@ -69,7 +74,7 @@ let chartInstances = {};
 function switchNav(viewName) {
   currentView = viewName;
 
-  const views = ["landing", "citizen", "mp", "da", "ia", "monitoring", "alerts", "analytics"];
+  const views = ["landing", "citizen", "mp", "da", "ia", "monitoring", "alerts", "analytics", "admin"];
   views.forEach(v => {
     const el = document.getElementById(`view-${v}`);
     if (el) el.classList.add("hidden");
@@ -80,6 +85,12 @@ function switchNav(viewName) {
       navBtn.classList.add("text-slate-600", "hover:text-gov-primary", "hover:bg-slate-100");
     }
   });
+
+  const navDelayBtn = document.getElementById("nav-delay");
+  if (navDelayBtn) {
+    navDelayBtn.classList.remove("bg-gov-primary", "text-white", "font-bold", "shadow-xs");
+    navDelayBtn.classList.add("text-slate-600", "hover:text-gov-primary", "hover:bg-slate-100");
+  }
 
   const activeEl = document.getElementById(`view-${viewName}`);
   if (activeEl) activeEl.classList.remove("hidden");
@@ -107,58 +118,292 @@ function switchNav(viewName) {
       loadAlertsView();
     } else if (viewName === "analytics") {
       renderAnalyticsCharts();
+    } else if (viewName === "admin") {
+      loadAdminData();
     }
   } catch (err) {
     console.error(`Error loading data for view ${viewName}:`, err);
   }
 }
 
-// Role Switcher Handler
-function handleRoleChange(role) {
-  currentRole = role;
-  const labelEl = document.getElementById("current-user-label");
+// ─── AUTH & ROLE SYSTEM ────────────────────────────────────────────────────
 
-  if (role === "citizen") {
-    if (labelEl) labelEl.textContent = "Citizen / Public — Demo User";
-  } else if (role === "mp") {
-    if (labelEl) labelEl.textContent = `MP Portal — Demo User (${activeSelectedMp || 'Demo'})`;
-  } else if (role === "district_authority") {
-    if (labelEl) labelEl.textContent = `District Authority — Demo User (${activeSelectedDistrict || 'Demo'})`;
-  } else if (role === "implementing_agency") {
-    if (labelEl) labelEl.textContent = "Implementing Agency — Demo User";
+/** Fetch wrapper that includes session cookie and redirects to login on 401 */
+async function apiFetch(url, options = {}) {
+  const opts = { ...options, credentials: 'include' };
+  if (csrfToken && opts.method && opts.method.toUpperCase() !== 'GET') {
+    opts.headers = { ...(opts.headers || {}), 'X-CSRF-Token': csrfToken };
   }
-
-  openCurrentPortal();
-}
-
-function openCurrentPortal() {
-  if (currentRole === "mp") {
-    switchNav("mp");
-  } else if (currentRole === "district_authority") {
-    switchNav("da");
-  } else if (currentRole === "implementing_agency") {
-    switchNav("ia");
-  } else {
-    switchNav("citizen");
-  }
-}
-
-function setRoleAndOpen(role) {
-  const select = document.getElementById("role-switcher");
-  if (select) select.value = role;
-  handleRoleChange(role);
+  const res = await fetch(url, opts);
+  if (res.status === 401) { openLoginModal(); throw new Error('Unauthenticated'); }
+  return res;
 }
 
 // Modal Handlers
 function openModal(id) {
   const el = document.getElementById(id);
-  if (el) el.classList.remove("hidden");
+  if (el) el.classList.remove('hidden');
 }
 
 function closeModal(id) {
   const el = document.getElementById(id);
-  if (el) el.classList.add("hidden");
+  if (el) el.classList.add('hidden');
 }
+
+function openLoginModal() { openModal('modal-login'); }
+
+async function quickLogin(username, password) {
+  const uEl = document.getElementById('login-username');
+  const pEl = document.getElementById('login-password');
+  if (uEl) uEl.value = username;
+  if (pEl) pEl.value = password;
+  await handleLoginSubmit(null);
+}
+
+async function handleLoginSubmit(event) {
+  if (event) event.preventDefault();
+  const username = (document.getElementById('login-username')?.value || '').trim();
+  const password = document.getElementById('login-password')?.value || '';
+  const errEl   = document.getElementById('login-error-alert');
+  const errText = document.getElementById('login-error-text');
+  const btn     = document.getElementById('login-submit-btn');
+
+  if (errEl) errEl.classList.add('hidden');
+  if (btn) { btn.disabled = true; btn.textContent = 'Authenticating…'; }
+
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (errEl) errEl.classList.remove('hidden');
+      if (errText) errText.textContent = data.detail || 'Invalid credentials.';
+      return;
+    }
+    currentUser  = data.user;
+    sessionToken = data.session_token;
+    csrfToken    = data.csrf_token;
+    currentRole  = currentUser.role;
+    closeModal('modal-login');
+    if (document.getElementById('login-username')) document.getElementById('login-username').value = '';
+    if (document.getElementById('login-password')) document.getElementById('login-password').value = '';
+    updateAuthUI();
+    openCurrentPortal();
+  } catch (err) {
+    if (err.message !== 'Unauthenticated') {
+      if (errEl) errEl.classList.remove('hidden');
+      if (errText) errText.textContent = 'Network error. Please try again.';
+    }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Sign In Securely'; }
+  }
+}
+
+async function handleLogout() {
+  try {
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+  } catch (e) { /* best-effort */ }
+  currentUser  = null;
+  sessionToken = null;
+  csrfToken    = null;
+  currentRole  = 'citizen';
+  updateAuthUI();
+  switchNav('landing');
+}
+
+function togglePasswordVisibility(inputId) {
+  const el = document.getElementById(inputId);
+  if (el) el.type = (el.type === 'password') ? 'text' : 'password';
+}
+
+const ROLE_ICONS  = { mp: '🏛️', district_authority: '⚖️', implementing_agency: '🛠️', admin: '🛡️', citizen: '👤' };
+const ROLE_LABELS = { mp: 'MP Portal', district_authority: 'District Authority', implementing_agency: 'Impl. Agency', admin: 'System Admin', citizen: 'Public Citizen' };
+
+function updateAuthUI() {
+  const role    = currentUser ? currentUser.role : 'citizen';
+  const labelEl = document.getElementById('current-user-label');
+  const btnSlot = document.getElementById('auth-button-slot');
+
+  if (currentUser) {
+    if (labelEl) labelEl.textContent = `${ROLE_ICONS[role] || '👤'} ${currentUser.full_name || currentUser.username}`;
+    if (btnSlot) btnSlot.innerHTML = `
+      <div class="flex items-center gap-2">
+        <span class="text-[11px] font-bold px-2 py-1 rounded-md bg-gov-primary/10 text-gov-primary">${ROLE_LABELS[role] || role}</span>
+        <button onclick="handleLogout()" class="bg-red-50 hover:bg-red-100 text-red-700 font-semibold text-xs px-3 py-1.5 rounded-lg border border-red-200 transition cursor-pointer flex items-center gap-1">
+          <span>🚪</span> Logout
+        </button>
+      </div>`;
+  } else {
+    if (labelEl) labelEl.textContent = 'Public Citizen (Guest)';
+    if (btnSlot) btnSlot.innerHTML = `
+      <button onclick="openLoginModal()" class="bg-gov-primary hover:bg-blue-900 text-white font-semibold text-xs px-3.5 py-2 rounded-lg transition shadow-xs flex items-center gap-1.5 cursor-pointer">
+        <span>🔐</span> Sign In
+      </button>`;
+  }
+
+  // Show / hide role-restricted nav tabs
+  const navMp    = document.getElementById('nav-mp');
+  const navDa    = document.getElementById('nav-da');
+  const navIa    = document.getElementById('nav-ia');
+  const navAdmin = document.getElementById('nav-admin');
+  if (navMp)    navMp.classList.toggle('hidden',    !currentUser || !['mp','admin'].includes(role));
+  if (navDa)    navDa.classList.toggle('hidden',    !currentUser || !['district_authority','admin'].includes(role));
+  if (navIa)    navIa.classList.toggle('hidden',    !currentUser || !['implementing_agency','admin'].includes(role));
+  if (navAdmin) navAdmin.classList.toggle('hidden', !currentUser || role !== 'admin');
+}
+
+function openCurrentPortal() {
+  const role = currentUser ? currentUser.role : 'citizen';
+  if      (role === 'mp')                  switchNav('mp');
+  else if (role === 'district_authority')  switchNav('da');
+  else if (role === 'implementing_agency') switchNav('ia');
+  else if (role === 'admin')               switchNav('admin');
+  else                                     switchNav('citizen');
+}
+
+/** Legacy stub — role-switcher select removed; kept so any stale callers don't throw */
+function handleRoleChange(role) { /* no-op — auth system replaced this */ }
+function setRoleAndOpen(role)   { /* no-op — auth system replaced this */ }
+
+// ─── ADMIN PORTAL ─────────────────────────────────────────────────────────
+
+function switchAdminTab(tab) {
+  ['users', 'logs'].forEach(t => {
+    document.getElementById(`admin-content-${t}`)?.classList.toggle('hidden', t !== tab);
+    const btn = document.getElementById(`admin-tab-${t}`);
+    if (btn) {
+      btn.classList.toggle('bg-gov-primary', t === tab);
+      btn.classList.toggle('text-white',     t === tab);
+      btn.classList.toggle('bg-slate-100',   t !== tab);
+      btn.classList.toggle('text-slate-700', t !== tab);
+    }
+  });
+}
+
+function openCreateUserModal() { openModal('modal-create-user'); }
+
+async function handleCreateUserSubmit(event) {
+  event.preventDefault();
+  const g = id => document.getElementById(id);
+  const payload = {
+    username:    g('cu-username')?.value.trim(),
+    password:    g('cu-password')?.value,
+    full_name:   g('cu-fullname')?.value.trim(),
+    email:       g('cu-email')?.value.trim() || null,
+    role:        g('cu-role')?.value,
+    state:       g('cu-state')?.value.trim()       || null,
+    district:    g('cu-district')?.value.trim()    || null,
+    constituency:g('cu-constituency')?.value.trim()|| null,
+    designation: g('cu-designation')?.value.trim() || null,
+    agency_id:   g('cu-agency-id')?.value ? parseInt(g('cu-agency-id').value) : null,
+    agency_name: g('cu-agency-name')?.value.trim() || null,
+  };
+  try {
+    const res  = await apiFetch('/api/admin/users', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (res.ok) {
+      closeModal('modal-create-user');
+      document.getElementById('form-create-user')?.reset();
+      alert(`✅ User '${payload.username}' created successfully.`);
+      loadAdminData();
+    } else { alert(`Error: ${data.detail || 'Failed to create user.'}`); }
+  } catch (e) { if (e.message !== 'Unauthenticated') alert('Error creating user.'); }
+}
+
+async function loadAdminData() {
+  try {
+    const [uRes, lRes] = await Promise.all([
+      apiFetch('/api/admin/users'),
+      apiFetch('/api/admin/security-logs?limit=100')
+    ]);
+    const uData = await uRes.json();
+    const lData = await lRes.json();
+
+    const users = uData.users || [];
+    const userCountEl = document.getElementById('admin-user-count');
+    if (userCountEl) userCountEl.textContent = users.length;
+
+    const ROLE_BADGE = {
+      admin: 'bg-purple-100 text-purple-800', mp: 'bg-blue-100 text-blue-800',
+      district_authority: 'bg-amber-100 text-amber-800',
+      implementing_agency: 'bg-emerald-100 text-emerald-800',
+      citizen: 'bg-slate-100 text-slate-600'
+    };
+    const usersTbody = document.getElementById('admin-users-tbody');
+    if (usersTbody) {
+      usersTbody.innerHTML = users.map(u => `
+        <tr class="border-b border-slate-100 hover:bg-slate-50 transition">
+          <td class="p-2 font-mono font-bold text-xs">${u.username}</td>
+          <td class="p-2 text-xs">${u.full_name || '—'}<br><span class="text-[10px] text-slate-400">${u.designation || ''}</span></td>
+          <td class="p-2"><span class="px-2 py-0.5 rounded-full text-[11px] font-bold ${ROLE_BADGE[u.role] || ''}">${u.role}</span></td>
+          <td class="p-2 text-[11px]">${[u.state, u.district].filter(Boolean).join(' › ') || u.agency_name || 'National'}</td>
+          <td class="p-2">${u.is_active ? '<span class="text-emerald-700 font-bold text-xs">✓ Active</span>' : '<span class="text-red-600 font-bold text-xs">✗ Inactive</span>'}</td>
+          <td class="p-2 text-[11px] text-slate-500">${u.last_login_at ? formatDate(u.last_login_at) : 'Never'}</td>
+          <td class="p-2">
+            ${u.id !== currentUser?.id
+              ? `<button onclick="toggleUserStatus(${u.id}, ${u.is_active ? 0 : 1})"
+                   class="px-2 py-1 text-[11px] font-bold rounded cursor-pointer ${u.is_active ? 'bg-red-50 text-red-700 hover:bg-red-100' : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'}">
+                   ${u.is_active ? 'Deactivate' : 'Activate'}
+                 </button>`
+              : '<span class="text-[11px] text-slate-400">Current</span>'}
+          </td>
+        </tr>`).join('');
+    }
+
+    const logs = lData.logs || [];
+    const logCountEl = document.getElementById('admin-log-count');
+    if (logCountEl) logCountEl.textContent = logs.length;
+
+    const ACTION_COLOR = {
+      LOGIN_SUCCESS: 'text-emerald-700', LOGIN_FAILED: 'text-red-600',
+      LOGIN_FAILED_CREDENTIALS: 'text-red-600', LOGOUT: 'text-slate-600',
+      UNAUTHORIZED_ROLE_ACCESS: 'text-orange-700', ML_RETRAIN: 'text-purple-700'
+    };
+    const logsTbody = document.getElementById('admin-logs-tbody');
+    if (logsTbody) {
+      logsTbody.innerHTML = logs.map(l => `
+        <tr class="border-b border-slate-100 hover:bg-slate-50 transition">
+          <td class="p-2 font-mono text-[11px]">${formatDate(l.created_at)}</td>
+          <td class="p-2 font-bold text-xs ${ACTION_COLOR[l.action] || 'text-slate-700'}">${l.action}</td>
+          <td class="p-2 text-xs">${l.actor_username || 'anonymous'}<br><span class="text-[10px] text-slate-400">${l.actor_role || 'guest'}</span></td>
+          <td class="p-2 font-mono text-[11px]">${l.ip_address || 'N/A'}</td>
+          <td class="p-2"><span class="px-1.5 py-0.5 rounded text-[10px] font-bold ${l.status === '200' || l.status === '201' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}">${l.status}</span></td>
+          <td class="p-2 text-[11px] text-slate-500 max-w-xs truncate" title="${l.details || ''}">${l.details || ''}</td>
+        </tr>`).join('');
+    }
+  } catch (e) { if (e.message !== 'Unauthenticated') console.error('Admin data load error:', e); }
+}
+
+async function toggleUserStatus(userId, newStatus) {
+  try {
+    const res = await apiFetch(`/api/admin/users/${userId}/status`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_active: newStatus })
+    });
+    if (res.ok) { loadAdminData(); }
+    else { const d = await res.json(); alert(d.detail || 'Error updating status.'); }
+  } catch (e) { if (e.message !== 'Unauthenticated') alert('Error updating user status.'); }
+}
+
+/** Called on page load — restores session if cookie is still valid */
+async function initAuth() {
+  try {
+    const res  = await fetch('/api/auth/me', { credentials: 'include' });
+    const data = await res.json();
+    if (data.authenticated) {
+      currentUser = data.user;
+      csrfToken   = data.csrf_token || null;
+      currentRole = currentUser.role;
+    }
+  } catch (e) { /* no session — guest mode */ }
+  updateAuthUI();
+}
+
 
 
 // --- METADATA & DYNAMIC DROPDOWNS ---
@@ -949,6 +1194,7 @@ async function submitRecommendation(e) {
   try {
     const res = await fetch("/api/mp/recommend", {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
@@ -973,7 +1219,7 @@ async function loadDaDashboard(stateName, districtName) {
     if (stateName) params.append("state", stateName);
     if (districtName) params.append("district", districtName);
 
-    const res = await fetch(`/api/da/dashboard?${params.toString()}`);
+    const res = await fetch(`/api/da/dashboard?${params.toString()}`, { credentials: "include" });
     const data = await res.json();
 
     activeSelectedDistrict = data.district;
@@ -1105,6 +1351,7 @@ async function submitReview(e) {
   try {
     const res = await fetch("/api/da/review", {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
@@ -1125,7 +1372,7 @@ async function submitReview(e) {
 // --- 6. IMPLEMENTING AGENCY (IA) PORTAL ---
 async function loadIaDashboard() {
   try {
-    const res = await fetch("/api/agency/dashboard");
+    const res = await fetch("/api/agency/dashboard", { credentials: "include" });
     const data = await res.json();
 
     document.getElementById("ia-assigned-count").textContent = `${data.kpis.total_assigned} Works`;
@@ -1198,6 +1445,7 @@ async function submitProgressUpdate(e) {
   try {
     const res = await fetch("/api/agency/update-progress", {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
@@ -1554,7 +1802,7 @@ async function triggerRetrainMl() {
   if (!confirm("Are you sure you want to retrain the Isolation Forest model on all 41,086 projects with contamination = 0.05?")) return;
 
   try {
-    const res = await fetch("/api/ml/retrain?contamination=0.05", { method: "POST" });
+    const res = await fetch("/api/ml/retrain?contamination=0.05", { method: "POST", credentials: "include" });
     const data = await res.json();
 
     if (res.ok && data.success) {
@@ -1566,6 +1814,336 @@ async function triggerRetrainMl() {
   } catch (err) {
     console.error("Retrain error:", err);
     alert("Retrain API call failed.");
+  }
+}
+
+
+// --- 7B. AI-POWERED PROJECT DELAY PREDICTION & EARLY WARNING ---
+
+let delayPage = 1;
+let delayLimit = 20;
+let delayMetadataPopulated = false;
+
+function openDelayPredictionTab() {
+  switchNav("monitoring");
+  switchMonitoringSubTab("delay");
+  const navDelayBtn = document.getElementById("nav-delay");
+  const navMonBtn = document.getElementById("nav-monitoring");
+  if (navMonBtn) {
+    navMonBtn.classList.remove("bg-gov-primary", "text-white", "font-bold", "shadow-xs");
+    navMonBtn.classList.add("text-slate-600", "hover:text-gov-primary", "hover:bg-slate-100");
+  }
+  if (navDelayBtn) {
+    navDelayBtn.classList.add("bg-gov-primary", "text-white", "font-bold", "shadow-xs");
+    navDelayBtn.classList.remove("text-slate-600", "hover:text-gov-primary", "hover:bg-slate-100");
+  }
+}
+
+function switchMonitoringSubTab(tab) {
+  const isAnomaly = (tab === "anomaly");
+  const subAnomaly = document.getElementById("mon-subview-anomaly");
+  const subDelay = document.getElementById("mon-subview-delay");
+  const btnAnomaly = document.getElementById("mon-subtab-anomaly");
+  const btnDelay = document.getElementById("mon-subtab-delay");
+
+  if (subAnomaly) subAnomaly.classList.toggle("hidden", !isAnomaly);
+  if (subDelay) subDelay.classList.toggle("hidden", isAnomaly);
+
+  if (btnAnomaly) {
+    btnAnomaly.classList.toggle("bg-gov-primary", isAnomaly);
+    btnAnomaly.classList.toggle("text-white", isAnomaly);
+    btnAnomaly.classList.toggle("shadow-xs", isAnomaly);
+    btnAnomaly.classList.toggle("text-slate-700", !isAnomaly);
+    btnAnomaly.classList.toggle("hover:bg-slate-200", !isAnomaly);
+  }
+
+  if (btnDelay) {
+    btnDelay.classList.toggle("bg-gov-primary", !isAnomaly);
+    btnDelay.classList.toggle("text-white", !isAnomaly);
+    btnDelay.classList.toggle("shadow-xs", !isAnomaly);
+    btnDelay.classList.toggle("text-slate-700", isAnomaly);
+    btnDelay.classList.toggle("hover:bg-slate-200", isAnomaly);
+  }
+
+  if (isAnomaly) {
+    loadMonitoringDashboard();
+  } else {
+    loadDelayDashboard();
+  }
+}
+
+async function loadDelayDashboard() {
+  // Populate filter dropdowns from metadata if available
+  if (!delayMetadataPopulated && geoMetadata) {
+    const stSel = document.getElementById("dp-filter-state");
+    if (stSel && geoMetadata.states) {
+      stSel.innerHTML = `<option value="">All States (${geoMetadata.states.length})</option>` +
+        geoMetadata.states.map(s => `<option value="${s}">${s}</option>`).join("");
+    }
+    const catSel = document.getElementById("dp-filter-category");
+    if (catSel && geoMetadata.categories) {
+      catSel.innerHTML = `<option value="">All Categories (${geoMetadata.categories.length})</option>` +
+        geoMetadata.categories.map(c => `<option value="${c}">${c}</option>`).join("");
+    }
+    delayMetadataPopulated = true;
+  }
+
+  // Load KPI Summary
+  try {
+    const res = await fetch("/api/delay-prediction/summary");
+    const summary = await res.json();
+    if (summary.ready) {
+      const el = id => document.getElementById(id);
+      if (el("dp-kpi-total-assessed")) el("dp-kpi-total-assessed").textContent = summary.total_assessed.toLocaleString();
+      if (el("dp-kpi-completed-count")) el("dp-kpi-completed-count").textContent = `${summary.completed_training_count.toLocaleString()} (Training Cohort)`;
+      if (el("dp-kpi-ongoing-count")) el("dp-kpi-ongoing-count").textContent = `${summary.ongoing_monitored_count.toLocaleString()} (Active Monitored)`;
+
+      if (el("dp-kpi-high-risk")) el("dp-kpi-high-risk").textContent = summary.high_risk_count.toLocaleString();
+      const highPct = summary.total_assessed > 0 ? ((summary.high_risk_count / summary.total_assessed) * 100).toFixed(1) : 0;
+      if (el("dp-kpi-high-pct")) el("dp-kpi-high-pct").textContent = `${highPct}%`;
+
+      if (el("dp-kpi-med-risk")) el("dp-kpi-med-risk").textContent = summary.medium_risk_count.toLocaleString();
+      const medPct = summary.total_assessed > 0 ? ((summary.medium_risk_count / summary.total_assessed) * 100).toFixed(1) : 0;
+      if (el("dp-kpi-med-pct")) el("dp-kpi-med-pct").textContent = `${medPct}%`;
+
+      if (el("dp-kpi-approaching")) el("dp-kpi-approaching").textContent = `${summary.approaching_deadline_count.toLocaleString()} Works`;
+    }
+  } catch (err) {
+    console.error("Failed to load delay prediction summary:", err);
+  }
+
+  fetchDelayProjects(delayPage);
+}
+
+async function fetchDelayProjects(page = 1) {
+  delayPage = page;
+  const tbody = document.getElementById("dp-table-body");
+  if (!tbody) return;
+  tbody.innerHTML = `<tr><td colspan="9" class="text-center py-8 text-slate-400">Loading delay predictions from database...</td></tr>`;
+
+  const q = document.getElementById("dp-filter-q")?.value || "";
+  const state = document.getElementById("dp-filter-state")?.value || "";
+  const cat = document.getElementById("dp-filter-category")?.value || "";
+  const risk = document.getElementById("dp-filter-risk")?.value || "";
+  const status = document.getElementById("dp-filter-status")?.value || "";
+  const approaching = document.getElementById("dp-filter-approaching")?.value || "";
+
+  const params = new URLSearchParams({ page: delayPage, limit: delayLimit });
+  if (q) params.append("q", q);
+  if (state) params.append("state", state);
+  if (cat) params.append("work_category", cat);
+  if (risk) params.append("risk_level", risk);
+  if (status) params.append("status", status);
+  if (approaching) params.append("approaching_deadline", approaching);
+
+  try {
+    const res = await fetch(`/api/delay-prediction/projects?${params.toString()}`);
+    const data = await res.json();
+
+    document.getElementById("dp-results-count").textContent = (data.total || 0).toLocaleString();
+    document.getElementById("dp-page-num").textContent = data.page || 1;
+    document.getElementById("dp-total-pages").textContent = data.total_pages || 1;
+    document.getElementById("dp-prev-btn").disabled = (data.page <= 1);
+    document.getElementById("dp-next-btn").disabled = (data.page >= data.total_pages);
+
+    if (!data.items || data.items.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="9" class="text-center py-8 text-slate-500 font-medium">No projects match the selected delay filter criteria.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = data.items.map(p => {
+      const probPct = (p.predicted_delay_prob * 100).toFixed(1);
+      const isHigh = (p.risk_level === "HIGH");
+      const isMed = (p.risk_level === "MEDIUM");
+
+      let badgeClass = "bg-emerald-100 text-emerald-800 border-emerald-200";
+      let barColor = "bg-emerald-500";
+      let probTextColor = "text-emerald-700";
+
+      if (isHigh) {
+        badgeClass = "bg-red-100 text-red-700 border-red-200";
+        barColor = "bg-red-600";
+        probTextColor = "text-red-700";
+      } else if (isMed) {
+        badgeClass = "bg-amber-100 text-amber-800 border-amber-200";
+        barColor = "bg-amber-500";
+        probTextColor = "text-amber-700";
+      }
+
+      const isApproaching = p.approaching_deadline === 1;
+      const daysNote = isApproaching ? `<span class="inline-block mt-0.5 px-1.5 py-0.2 rounded text-[10px] font-bold bg-blue-100 text-blue-800 animate-pulse">⏱️ Due in ${p.days_to_deadline}d</span>` : "";
+
+      return `
+        <tr class="hover:bg-slate-50 transition border-b border-slate-100 text-xs">
+          <td class="px-4 py-3 font-mono font-bold text-slate-800">${p.work_id}</td>
+          <td class="px-4 py-3 max-w-xs">
+            <div class="font-semibold text-slate-800 line-clamp-1" title="${p.work_title || ''}">${p.work_title || 'N/A'}</div>
+            <div class="text-[11px] text-slate-400 mt-0.5">${p.work_category || 'General'} • Outlay: ${formatINR(p.sanction_amount)}</div>
+          </td>
+          <td class="px-4 py-3">
+            <div class="font-semibold text-slate-700">${p.district || 'N/A'}, ${p.state || 'N/A'}</div>
+            <div class="text-[11px] text-gov-primary">${p.constituency || ''}</div>
+          </td>
+          <td class="px-4 py-3 text-slate-600 font-mono text-[11px]">${formatDate(p.sanction_date)}</td>
+          <td class="px-4 py-3 text-slate-700 font-mono text-[11px]">
+            <div>${formatDate(p.expected_completion_date)}</div>
+            ${daysNote}
+          </td>
+          <td class="px-4 py-3">
+            ${renderStatusBadge(p.work_completion_status || p.execution_status)}
+          </td>
+          <td class="px-4 py-3">
+            <div class="flex items-center gap-2">
+              <div class="w-16 bg-slate-200 rounded-full h-2 overflow-hidden">
+                <div class="${barColor} h-2 rounded-full" style="width: ${Math.min(100, probPct)}%"></div>
+              </div>
+              <span class="font-bold font-mono ${probTextColor}">${probPct}%</span>
+            </div>
+          </td>
+          <td class="px-4 py-3">
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold border ${badgeClass}">${p.risk_level} RISK</span>
+          </td>
+          <td class="px-4 py-3 text-right">
+            <button onclick="inspectProjectDelay('${p.work_id}')" class="text-xs font-bold text-gov-primary hover:text-blue-900 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-3 py-1.5 rounded-lg transition shadow-2xs cursor-pointer whitespace-nowrap">
+              Inspect Risk
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join("");
+
+  } catch (err) {
+    console.error("Failed to fetch delay projects:", err);
+    tbody.innerHTML = `<tr><td colspan="9" class="text-center py-8 text-red-500 font-medium">Failed to load delay predictions: ${err.message}</td></tr>`;
+  }
+}
+
+function applyDelayFilter() {
+  fetchDelayProjects(1);
+}
+
+function resetDelayFilters() {
+  if (document.getElementById("dp-filter-q")) document.getElementById("dp-filter-q").value = "";
+  if (document.getElementById("dp-filter-state")) document.getElementById("dp-filter-state").value = "";
+  if (document.getElementById("dp-filter-category")) document.getElementById("dp-filter-category").value = "";
+  if (document.getElementById("dp-filter-risk")) document.getElementById("dp-filter-risk").value = "";
+  if (document.getElementById("dp-filter-status")) document.getElementById("dp-filter-status").value = "";
+  if (document.getElementById("dp-filter-approaching")) document.getElementById("dp-filter-approaching").value = "";
+  fetchDelayProjects(1);
+}
+
+function changeDelayPage(delta) {
+  fetchDelayProjects(delayPage + delta);
+}
+
+async function inspectProjectDelay(workId) {
+  try {
+    const res = await fetch(`/api/delay-prediction/project/${encodeURIComponent(workId)}`);
+    if (!res.ok) throw new Error("Could not load project prediction detail.");
+    const data = await res.json();
+
+    const p = data.prediction || {};
+    const meta = data.metadata || {};
+    const time = data.timeline || {};
+    const fin = data.financials || {};
+    const probPct = (p.predicted_delay_prob * 100).toFixed(1);
+
+    const el = id => document.getElementById(id);
+    if (el("dp-ins-work-title")) el("dp-ins-work-title").textContent = meta.work_title || "Project Inspection";
+    if (el("dp-ins-work-id")) el("dp-ins-work-id").textContent = `${data.work_id} • ${meta.state} › ${meta.district}`;
+    if (el("dp-ins-prob-val")) el("dp-ins-prob-val").textContent = `${probPct}%`;
+    if (el("dp-ins-prob-pct")) el("dp-ins-prob-pct").textContent = `${probPct}%`;
+    if (el("dp-ins-prob-bar")) {
+      el("dp-ins-prob-bar").style.width = `${Math.min(100, probPct)}%`;
+      el("dp-ins-prob-bar").className = (p.risk_level === "HIGH") ? "bg-red-600 h-2.5 rounded-full" : (p.risk_level === "MEDIUM") ? "bg-amber-500 h-2.5 rounded-full" : "bg-emerald-500 h-2.5 rounded-full";
+    }
+
+    if (el("dp-ins-risk-badge")) {
+      el("dp-ins-risk-badge").textContent = `${p.risk_level} RISK`;
+      el("dp-ins-risk-badge").className = (p.risk_level === "HIGH")
+        ? "px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-red-100 text-red-700 border border-red-200"
+        : (p.risk_level === "MEDIUM")
+        ? "px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-200"
+        : "px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200";
+    }
+
+    if (el("dp-ins-risk-tier")) el("dp-ins-risk-tier").textContent = `${p.risk_level} PRIORITY`;
+    if (el("dp-ins-deadline-note")) el("dp-ins-deadline-note").textContent = (time.days_to_deadline >= 0) ? `Deadline due in ${time.days_to_deadline} days` : `Exceeded deadline by ${Math.abs(time.days_to_deadline)} days`;
+    if (el("dp-ins-factors")) el("dp-ins-factors").textContent = p.contributing_factors || "Standard feature progression.";
+
+    // Recorded facts
+    if (el("dp-ins-sanction-amt")) el("dp-ins-sanction-amt").textContent = formatINR(fin.sanction_amount);
+    if (el("dp-ins-rec-date")) el("dp-ins-rec-date").textContent = formatDate(time.sanction_date);
+    if (el("dp-ins-sanc-date")) el("dp-ins-sanc-date").textContent = formatDate(time.sanction_date);
+    if (el("dp-ins-lead-time")) el("dp-ins-lead-time").textContent = `${fin.sanction_lead_time_days || 0} days`;
+    if (el("dp-ins-early-disb")) el("dp-ins-early-disb").textContent = `${formatINR(fin.early_disbursed_amount)} (${fin.early_disbursement_ratio_pct}% of outlay)`;
+    if (el("dp-ins-exp-date")) el("dp-ins-exp-date").textContent = formatDate(time.expected_completion_date);
+    if (el("dp-ins-status")) el("dp-ins-status").textContent = meta.work_completion_status || meta.execution_status || "ACTIVE";
+
+    // Warning trigger
+    if (el("dp-ins-warning-trigger")) {
+      el("dp-ins-warning-trigger").textContent = time.approaching_deadline ? "⚠️ ACTIVE EARLY WARNING TRIGGERED" : "STANDARD MONITORING QUEUE";
+      el("dp-ins-warning-trigger").className = time.approaching_deadline ? "text-amber-700 font-bold" : "text-slate-600";
+    }
+
+    // Payments audit trail
+    const payTbody = el("dp-ins-payments-tbody");
+    if (payTbody) {
+      if (!data.payments || data.payments.length === 0) {
+        payTbody.innerHTML = `<tr><td colspan="4" class="text-center py-4 text-slate-400">Zero payment disbursements recorded for this work ID.</td></tr>`;
+      } else {
+        payTbody.innerHTML = data.payments.map(py => `
+          <tr class="border-b border-slate-100 hover:bg-slate-50 transition">
+            <td class="p-2 font-mono">${formatDate(py.expenditure_date)}</td>
+            <td class="p-2 font-semibold text-slate-700">${py.vendor_name_normalized || 'Direct / Treasury'}</td>
+            <td class="p-2">${py.payment_status || 'DISBURSED'}</td>
+            <td class="p-2 font-bold text-emerald-700">${formatINR(py.reported_fund_disbursed_amount)}</td>
+          </tr>
+        `).join("");
+      }
+    }
+
+    openModal("modal-delay-inspect");
+  } catch (err) {
+    alert("Error inspecting project delay: " + err.message);
+  }
+}
+
+async function openDelayMetricsModal() {
+  try {
+    const res = await fetch("/api/delay-prediction/metrics");
+    const data = await res.json();
+    if (data.metrics) {
+      const m = data.metrics;
+      const el = id => document.getElementById(id);
+      if (el("dp-m-acc")) el("dp-m-acc").textContent = `${(m.accuracy * 100).toFixed(2)}%`;
+      if (el("dp-m-prec")) el("dp-m-prec").textContent = `${(m.precision * 100).toFixed(2)}%`;
+      if (el("dp-m-rec")) el("dp-m-rec").textContent = `${(m.recall * 100).toFixed(2)}%`;
+      if (el("dp-m-f1")) el("dp-m-f1").textContent = `${(m.f1_score * 100).toFixed(2)}%`;
+      if (el("dp-m-auc")) el("dp-m-auc").textContent = `${m.roc_auc.toFixed(4)}`;
+    }
+    openModal("modal-delay-metrics");
+  } catch (err) {
+    alert("Could not load model audit metrics: " + err.message);
+  }
+}
+
+async function triggerRetrainDelayModel() {
+  if (!confirm("Are you sure you want to retrain the supervised Random Forest Delay Prediction model on all 19,304 verified historical completion outcomes?")) return;
+
+  try {
+    const res = await apiFetch("/api/delay-prediction/retrain", { method: "POST" });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      alert(`✅ Supervised Delay Prediction model retrained successfully!\nAccuracy: ${(data.metrics.accuracy * 100).toFixed(2)}%\nROC-AUC: ${data.metrics.roc_auc.toFixed(4)}\nEvaluated Records: ${data.training_records.toLocaleString()}`);
+      loadDelayDashboard();
+    } else {
+      alert("Retraining failed: " + (data.detail || "Unauthorized or internal error."));
+    }
+  } catch (err) {
+    if (err.message !== "Unauthenticated") {
+      alert("Retrain API call failed: " + err.message);
+    }
   }
 }
 
@@ -2295,6 +2873,7 @@ function viewAllDistrictProjects(stateName, districtName) {
 
 // Initial Boot
 document.addEventListener("DOMContentLoaded", () => {
+  initAuth();               // Restore existing session or show guest UI
   fetchMetadata();
   fetchAnalyticsOverview();
   switchNav("landing");

@@ -1,0 +1,5 @@
+Algorithm,Evaluated Records,Flagged Outliers,Flagged Pct (%),Score Min,Score Median,Score 95th Pct,Score Max,Score Std,Jaccard vs IF,Spearman Corr vs IF
+Isolation Forest,8218,419,5.10%,-0.203,-0.1363,0.0006,0.2175,0.0609,1.0,1.0
+Local Outlier Factor,8218,417,5.07%,0.9192,1.0418,1.6807,4344718643.3982,116286459.8365,0.022,0.1575
+One-Class SVM,8218,421,5.12%,-49.4722,-16.1882,0.1912,121.2589,15.3325,0.5162,0.1273
+Elliptic Envelope,8218,381,4.64%,-3406.3822,-3395.5671,-893.9458,1657699.9455,53431.5914,0.2214,0.7188

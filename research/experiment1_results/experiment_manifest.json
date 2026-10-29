@@ -1,0 +1,106 @@
+{
+  "experiment": "Experiment 1: Comparative Evaluation of Unsupervised Anomaly-Detection Models",
+  "created_utc": "2026-10-11T07:34:45.707416+00:00",
+  "database_path": "C:\\Users\\ACER\\Desktop\\Nirakshan-AI\\data\\mplads_historical.db",
+  "source_table": "project_monitoring_features",
+  "features": [
+    "sanction_amount",
+    "total_disbursed",
+    "budget_disbursement_ratio",
+    "sanction_lead_time_days",
+    "payment_tranche_count",
+    "max_single_tranche_ratio",
+    "work_description_length"
+  ],
+  "data_quality": {
+    "source_table": "project_monitoring_features",
+    "source_rows": 41086,
+    "rows_excluded_missing_work_id": 0,
+    "duplicate_work_id_rows": 0,
+    "missing_values_by_feature_before_imputation": {
+      "sanction_amount": 0,
+      "total_disbursed": 0,
+      "budget_disbursement_ratio": 0,
+      "sanction_lead_time_days": 0,
+      "payment_tranche_count": 0,
+      "max_single_tranche_ratio": 0,
+      "work_description_length": 0
+    },
+    "nonfinite_values_by_feature_before_imputation": {
+      "sanction_amount": 0,
+      "total_disbursed": 0,
+      "budget_disbursement_ratio": 0,
+      "sanction_lead_time_days": 0,
+      "payment_tranche_count": 0,
+      "max_single_tranche_ratio": 0,
+      "work_description_length": 0
+    },
+    "eligible_rows": 41086,
+    "excluded_rows_total": 0
+  },
+  "split": {
+    "method": "random shuffled train/held-out split",
+    "training_fraction": 0.25,
+    "training_records": 10271,
+    "held_out_fraction": 0.75,
+    "held_out_records": 30815,
+    "random_state": 42,
+    "imputation": "per-feature median fit using training rows; reused for all models; all-empty training feature falls back to 0.0",
+    "imputation_medians": {
+      "sanction_amount": 298800.0,
+      "total_disbursed": 190930.0,
+      "budget_disbursement_ratio": 0.9996914893617022,
+      "sanction_lead_time_days": 73.0,
+      "payment_tranche_count": 1.0,
+      "max_single_tranche_ratio": 0.75,
+      "work_description_length": 79.0
+    }
+  },
+  "models": {
+    "Isolation Forest": {
+      "settings": "n_estimators=100; contamination=0.05; random_state=42; raw features",
+      "scaling": "None (preserves existing backend Isolation Forest baseline)",
+      "score_definition": "-decision_function(X); sklearn decision_function is larger for inliers, negated so higher means more anomalous"
+    },
+    "Local Outlier Factor": {
+      "settings": "n_neighbors=20; contamination=0.05; novelty=True; metric=minkowski; p=2",
+      "scaling": "StandardScaler fit on common training split; applied to train and held-out records",
+      "score_definition": "-score_samples(X); sklearn documents lower score_samples as more abnormal, negated so higher means more anomalous"
+    },
+    "One-Class SVM": {
+      "settings": "kernel=rbf; nu=0.05; gamma=scale; cache_size=2048 MiB",
+      "scaling": "StandardScaler fit on common training split; applied to train and held-out records",
+      "score_definition": "-decision_function(X); positive decision values indicate inliers, negated so higher means more anomalous"
+    },
+    "Elliptic Envelope": {
+      "settings": "contamination=0.05; random_state=42; assume_centered=False; support_fraction=None",
+      "scaling": "StandardScaler fit on common training split; applied to train and held-out records",
+      "score_definition": "-decision_function(X); sklearn decision values are positive for inliers, negated so higher means more anomalous"
+    }
+  },
+  "preprocessing_rationale": "Isolation Forest baseline retains raw features; LOF and RBF One-Class SVM depend on distances/kernels, while Elliptic Envelope uses covariance geometry and scaling improves numerical conditioning across dollar, day, ratio, count, and text-length units.",
+  "limitations": [
+    "The project has no independently verified anomaly labels; no accuracy, precision, recall, F1, confusion matrix, or ROC-AUC is reported.",
+    "Anomaly flags are statistical screening outputs, not evidence of fraud, corruption, or wrongdoing.",
+    "Contamination and nu are model threshold/settings, not accuracy measures; holdout flagged percentages can differ from them.",
+    "LOF uses novelty=True and scores only the held-out cohort; sklearn notes novelty-mode scores can differ from standard in-sample outlier-detection scores.",
+    "Isolation Forest keeps its existing estimator settings but is fit only on the common training split for this comparative experiment, not on the full dataset as in the application pipeline."
+  ],
+  "software_versions": {
+    "python": "3.14.7",
+    "numpy": "2.5.4",
+    "pandas": "3.0.6",
+    "scikit_learn": "1.9.1",
+    "scipy": "1.18.1",
+    "matplotlib": "3.11.2"
+  },
+  "output_files": {
+    "summary": "model_comparison_summary.csv",
+    "records": "per_record_anomaly_scores.csv",
+    "overlap": "pairwise_model_overlap.csv",
+    "review": "flagged_projects_for_manual_review.csv",
+    "counts_chart": "flagged_counts_and_percentages.png",
+    "agreement_chart": "model_agreement_jaccard.png",
+    "manifest": "experiment_manifest.json"
+  }
+}

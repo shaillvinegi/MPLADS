@@ -1,0 +1,5 @@
+Algorithm,Heuristic True Positives,Heuristic False Positives,Heuristic False Negatives,Heuristic Accuracy,Heuristic Precision,Heuristic Recall,Heuristic F1-Score
+Isolation Forest,0,419,0,0.949,0.0,0.0,0.0
+Local Outlier Factor,0,417,0,0.9493,0.0,0.0,0.0
+One-Class SVM,0,421,0,0.9488,0.0,0.0,0.0
+Elliptic Envelope,0,381,0,0.9536,0.0,0.0,0.0
